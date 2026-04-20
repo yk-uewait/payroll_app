@@ -1,0 +1,6 @@
+{
+  "resources_dir": "resources",
+  "withholding_monthly_excel": "resources\\withholding_monthly.xlsx",
+  "withholding_bonus_excel": "resources\\withholding_bonus.xlsx",
+  "withholding_year_default": 2026
+}

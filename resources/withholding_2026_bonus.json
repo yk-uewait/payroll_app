@@ -1,0 +1,792 @@
+{
+  "year": 2026,
+  "kind": "bonus",
+  "rows": [
+    {
+      "rate_percent": 0.0,
+      "kou": [
+        {
+          "lower": null,
+          "upper": 82
+        },
+        {
+          "lower": null,
+          "upper": 107
+        },
+        {
+          "lower": null,
+          "upper": 143
+        },
+        {
+          "lower": null,
+          "upper": 181
+        },
+        {
+          "lower": null,
+          "upper": 218
+        },
+        {
+          "lower": null,
+          "upper": 251
+        },
+        {
+          "lower": null,
+          "upper": 284
+        },
+        {
+          "lower": null,
+          "upper": 317
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 2.042,
+      "kou": [
+        {
+          "lower": 82,
+          "upper": 94
+        },
+        {
+          "lower": 107,
+          "upper": 250
+        },
+        {
+          "lower": 143,
+          "upper": 276
+        },
+        {
+          "lower": 181,
+          "upper": 300
+        },
+        {
+          "lower": 218,
+          "upper": 300
+        },
+        {
+          "lower": 251,
+          "upper": 304
+        },
+        {
+          "lower": 284,
+          "upper": 343
+        },
+        {
+          "lower": 317,
+          "upper": 383
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 4.084,
+      "kou": [
+        {
+          "lower": 94,
+          "upper": 260
+        },
+        {
+          "lower": 250,
+          "upper": 289
+        },
+        {
+          "lower": 276,
+          "upper": 321
+        },
+        {
+          "lower": 300,
+          "upper": 354
+        },
+        {
+          "lower": 300,
+          "upper": 387
+        },
+        {
+          "lower": 304,
+          "upper": 412
+        },
+        {
+          "lower": 343,
+          "upper": 438
+        },
+        {
+          "lower": 383,
+          "upper": 463
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 6.126,
+      "kou": [
+        {
+          "lower": 260,
+          "upper": 309
+        },
+        {
+          "lower": 289,
+          "upper": 346
+        },
+        {
+          "lower": 321,
+          "upper": 377
+        },
+        {
+          "lower": 354,
+          "upper": 405
+        },
+        {
+          "lower": 387,
+          "upper": 431
+        },
+        {
+          "lower": 412,
+          "upper": 457
+        },
+        {
+          "lower": 438,
+          "upper": 483
+        },
+        {
+          "lower": 463,
+          "upper": 508
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 8.168,
+      "kou": [
+        {
+          "lower": 309,
+          "upper": 342
+        },
+        {
+          "lower": 346,
+          "upper": 373
+        },
+        {
+          "lower": 377,
+          "upper": 400
+        },
+        {
+          "lower": 405,
+          "upper": 424
+        },
+        {
+          "lower": 431,
+          "upper": 452
+        },
+        {
+          "lower": 457,
+          "upper": 479
+        },
+        {
+          "lower": 483,
+          "upper": 505
+        },
+        {
+          "lower": 508,
+          "upper": 529
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 10.21,
+      "kou": [
+        {
+          "lower": 342,
+          "upper": 372
+        },
+        {
+          "lower": 373,
+          "upper": 401
+        },
+        {
+          "lower": 400,
+          "upper": 426
+        },
+        {
+          "lower": 424,
+          "upper": 452
+        },
+        {
+          "lower": 452,
+          "upper": 477
+        },
+        {
+          "lower": 479,
+          "upper": 503
+        },
+        {
+          "lower": 505,
+          "upper": 527
+        },
+        {
+          "lower": 529,
+          "upper": 552
+        }
+      ],
+      "otsu": {
+        "lower": null,
+        "upper": 224
+      }
+    },
+    {
+      "rate_percent": 12.252,
+      "kou": [
+        {
+          "lower": 372,
+          "upper": 402
+        },
+        {
+          "lower": 401,
+          "upper": 430
+        },
+        {
+          "lower": 426,
+          "upper": 457
+        },
+        {
+          "lower": 452,
+          "upper": 484
+        },
+        {
+          "lower": 477,
+          "upper": 509
+        },
+        {
+          "lower": 503,
+          "upper": 531
+        },
+        {
+          "lower": 527,
+          "upper": 553
+        },
+        {
+          "lower": 552,
+          "upper": 578
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 14.294,
+      "kou": [
+        {
+          "lower": 402,
+          "upper": 433
+        },
+        {
+          "lower": 430,
+          "upper": 463
+        },
+        {
+          "lower": 457,
+          "upper": 492
+        },
+        {
+          "lower": 484,
+          "upper": 517
+        },
+        {
+          "lower": 509,
+          "upper": 540
+        },
+        {
+          "lower": 531,
+          "upper": 564
+        },
+        {
+          "lower": 553,
+          "upper": 589
+        },
+        {
+          "lower": 578,
+          "upper": 614
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 16.336,
+      "kou": [
+        {
+          "lower": 433,
+          "upper": 520
+        },
+        {
+          "lower": 463,
+          "upper": 520
+        },
+        {
+          "lower": 492,
+          "upper": 525
+        },
+        {
+          "lower": 517,
+          "upper": 550
+        },
+        {
+          "lower": 540,
+          "upper": 577
+        },
+        {
+          "lower": 564,
+          "upper": 604
+        },
+        {
+          "lower": 589,
+          "upper": 630
+        },
+        {
+          "lower": 614,
+          "upper": 657
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 18.378,
+      "kou": [
+        {
+          "lower": 520,
+          "upper": 605
+        },
+        {
+          "lower": 520,
+          "upper": 621
+        },
+        {
+          "lower": 525,
+          "upper": 636
+        },
+        {
+          "lower": 550,
+          "upper": 651
+        },
+        {
+          "lower": 577,
+          "upper": 666
+        },
+        {
+          "lower": 604,
+          "upper": 681
+        },
+        {
+          "lower": 630,
+          "upper": 697
+        },
+        {
+          "lower": 657,
+          "upper": 708
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 20.42,
+      "kou": [
+        {
+          "lower": 605,
+          "upper": 684
+        },
+        {
+          "lower": 621,
+          "upper": 705
+        },
+        {
+          "lower": 636,
+          "upper": 728
+        },
+        {
+          "lower": 651,
+          "upper": 751
+        },
+        {
+          "lower": 666,
+          "upper": 774
+        },
+        {
+          "lower": 681,
+          "upper": 798
+        },
+        {
+          "lower": 697,
+          "upper": 821
+        },
+        {
+          "lower": 708,
+          "upper": 845
+        }
+      ],
+      "otsu": {
+        "lower": 224,
+        "upper": 295
+      }
+    },
+    {
+      "rate_percent": 22.462,
+      "kou": [
+        {
+          "lower": 684,
+          "upper": 715
+        },
+        {
+          "lower": 705,
+          "upper": 739
+        },
+        {
+          "lower": 728,
+          "upper": 764
+        },
+        {
+          "lower": 751,
+          "upper": 788
+        },
+        {
+          "lower": 774,
+          "upper": 813
+        },
+        {
+          "lower": 798,
+          "upper": 838
+        },
+        {
+          "lower": 821,
+          "upper": 862
+        },
+        {
+          "lower": 845,
+          "upper": 887
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 24.504,
+      "kou": [
+        {
+          "lower": 715,
+          "upper": 752
+        },
+        {
+          "lower": 739,
+          "upper": 778
+        },
+        {
+          "lower": 764,
+          "upper": 804
+        },
+        {
+          "lower": 788,
+          "upper": 830
+        },
+        {
+          "lower": 813,
+          "upper": 856
+        },
+        {
+          "lower": 838,
+          "upper": 881
+        },
+        {
+          "lower": 862,
+          "upper": 907
+        },
+        {
+          "lower": 887,
+          "upper": 933
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 26.546,
+      "kou": [
+        {
+          "lower": 752,
+          "upper": 795
+        },
+        {
+          "lower": 778,
+          "upper": 821
+        },
+        {
+          "lower": 804,
+          "upper": 848
+        },
+        {
+          "lower": 830,
+          "upper": 876
+        },
+        {
+          "lower": 856,
+          "upper": 903
+        },
+        {
+          "lower": 881,
+          "upper": 930
+        },
+        {
+          "lower": 907,
+          "upper": 957
+        },
+        {
+          "lower": 933,
+          "upper": 985
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 28.588,
+      "kou": [
+        {
+          "lower": 795,
+          "upper": 854
+        },
+        {
+          "lower": 821,
+          "upper": 882
+        },
+        {
+          "lower": 848,
+          "upper": 910
+        },
+        {
+          "lower": 876,
+          "upper": 938
+        },
+        {
+          "lower": 903,
+          "upper": 966
+        },
+        {
+          "lower": 930,
+          "upper": 994
+        },
+        {
+          "lower": 957,
+          "upper": 1022
+        },
+        {
+          "lower": 985,
+          "upper": 1051
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 30.63,
+      "kou": [
+        {
+          "lower": 854,
+          "upper": 922
+        },
+        {
+          "lower": 882,
+          "upper": 952
+        },
+        {
+          "lower": 910,
+          "upper": 983
+        },
+        {
+          "lower": 938,
+          "upper": 1013
+        },
+        {
+          "lower": 966,
+          "upper": 1044
+        },
+        {
+          "lower": 994,
+          "upper": 1074
+        },
+        {
+          "lower": 1022,
+          "upper": 1104
+        },
+        {
+          "lower": 1051,
+          "upper": 1135
+        }
+      ],
+      "otsu": {
+        "lower": 295,
+        "upper": 527
+      }
+    },
+    {
+      "rate_percent": 32.672,
+      "kou": [
+        {
+          "lower": 922,
+          "upper": 1318
+        },
+        {
+          "lower": 952,
+          "upper": 1342
+        },
+        {
+          "lower": 983,
+          "upper": 1367
+        },
+        {
+          "lower": 1013,
+          "upper": 1391
+        },
+        {
+          "lower": 1044,
+          "upper": 1416
+        },
+        {
+          "lower": 1074,
+          "upper": 1440
+        },
+        {
+          "lower": 1104,
+          "upper": 1464
+        },
+        {
+          "lower": 1135,
+          "upper": 1489
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 35.735,
+      "kou": [
+        {
+          "lower": 1318,
+          "upper": 1521
+        },
+        {
+          "lower": 1342,
+          "upper": 1526
+        },
+        {
+          "lower": 1367,
+          "upper": 1526
+        },
+        {
+          "lower": 1391,
+          "upper": 1538
+        },
+        {
+          "lower": 1416,
+          "upper": 1555
+        },
+        {
+          "lower": 1440,
+          "upper": 1555
+        },
+        {
+          "lower": 1464,
+          "upper": 1555
+        },
+        {
+          "lower": 1489,
+          "upper": 1583
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 38.798,
+      "kou": [
+        {
+          "lower": 1521,
+          "upper": 2621
+        },
+        {
+          "lower": 1526,
+          "upper": 2645
+        },
+        {
+          "lower": 1526,
+          "upper": 2669
+        },
+        {
+          "lower": 1538,
+          "upper": 2693
+        },
+        {
+          "lower": 1555,
+          "upper": 2716
+        },
+        {
+          "lower": 1555,
+          "upper": 2740
+        },
+        {
+          "lower": 1555,
+          "upper": 2764
+        },
+        {
+          "lower": 1583,
+          "upper": 2788
+        }
+      ],
+      "otsu": {
+        "lower": 527,
+        "upper": 1118
+      }
+    },
+    {
+      "rate_percent": 41.861,
+      "kou": [
+        {
+          "lower": 2621,
+          "upper": 3495
+        },
+        {
+          "lower": 2645,
+          "upper": 3527
+        },
+        {
+          "lower": 2669,
+          "upper": 3559
+        },
+        {
+          "lower": 2693,
+          "upper": 3590
+        },
+        {
+          "lower": 2716,
+          "upper": 3622
+        },
+        {
+          "lower": 2740,
+          "upper": 3654
+        },
+        {
+          "lower": 2764,
+          "upper": 3685
+        },
+        {
+          "lower": 2788,
+          "upper": 3717
+        }
+      ],
+      "otsu": null
+    },
+    {
+      "rate_percent": 45.945,
+      "kou": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "otsu": null
+    }
+  ]
+}
