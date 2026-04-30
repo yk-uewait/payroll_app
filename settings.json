@@ -2,5 +2,7 @@
   "resources_dir": "resources",
   "withholding_monthly_excel": "resources\\withholding_monthly.xlsx",
   "withholding_bonus_excel": "resources\\withholding_bonus.xlsx",
-  "withholding_year_default": 2026
+  "withholding_year_default": 2026,
+  "last_db_path": "C:\\payroll_app\\Data\\給与データ.db",
+  "last_db_dir": "C:\\payroll_app\\Data"
 }
