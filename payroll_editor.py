@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from ui_window_utils import center_window
 
 def _to_int(s: str) -> int:
     s = (s or "").strip()
@@ -82,6 +83,7 @@ class PayrollEditorDialog(tk.Toplevel):
         ttk.Button(footer, text="キャンセル", command=self.destroy).pack(side="right", padx=5)
 
         self._update_totals()
+        center_window(self, master)
 
     def _build_pay_tab(self):
         self.money_entries = []

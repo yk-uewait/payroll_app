@@ -17,9 +17,12 @@ EMPLOYEE_CSV_COLUMNS = [
     "給与支給方式",
     "給与支給方式ID",
     "支給日",
+    "標準報酬月額（健保）",
+    "標準報酬月額（厚年）",
     "生年月日",
     "入社日",
     "退職日",
+    "退職処理済み",
     "源泉",
     "扶養人数",
     "都道府県",
@@ -225,6 +228,7 @@ def upsert_employee(
     payment_schedule_id=None,
     hire_date=None,
     leave_date=None,
+    retirement_processed=0,
     memo=None,
 ):
     cur = conn.cursor()
@@ -234,9 +238,9 @@ def upsert_employee(
           employee_code, name_kanji, department, payday_group,
           std_monthly_wage, std_pension_wage,
           tax_type, dependents_count, work_prefecture_name, birth_date,
-          payment_schedule_id, hire_date, leave_date, memo
+          payment_schedule_id, hire_date, leave_date, retirement_processed, memo
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_code) DO UPDATE SET
           name_kanji=excluded.name_kanji,
           department=excluded.department,
@@ -252,6 +256,7 @@ def upsert_employee(
           payment_schedule_id=excluded.payment_schedule_id,
           hire_date=excluded.hire_date,
           leave_date=excluded.leave_date,
+          retirement_processed=excluded.retirement_processed,
           memo=excluded.memo,
           updated_at=datetime('now')
         """,
@@ -269,6 +274,7 @@ def upsert_employee(
             payment_schedule_id,
             hire_date,
             leave_date,
+            int(retirement_processed or 0),
             memo,
         ),
     )
@@ -312,6 +318,12 @@ def _employee_csv_cell(row: dict, *keys: str, default: str = "") -> str:
         if key in row and row[key] is not None:
             return str(row[key]).strip()
     return default
+
+def _employee_csv_bool(value: str | None) -> int:
+    s = (value or "").strip().lower()
+    if s in {"1", "true", "yes", "y", "on", "済", "済み", "はい", "退職済み"}:
+        return 1
+    return 0
 
 def resolve_employee_payment_schedule_id(conn, row: dict) -> int | None:
     raw_id = _employee_csv_cell(
@@ -374,6 +386,7 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
         birth_date = _normalize_employee_csv_date(_employee_csv_cell(row, "birth_date", "生年月日"))
         hire_date = _normalize_employee_csv_date(_employee_csv_cell(row, "hire_date", "入社日"))
         leave_date = _normalize_employee_csv_date(_employee_csv_cell(row, "leave_date", "退職日"))
+        retirement_processed = _employee_csv_bool(_employee_csv_cell(row, "retirement_processed", "退職処理済み"))
         memo = _employee_csv_cell(row, "memo", "メモ", default="") or None
 
         upsert_employee(
@@ -391,6 +404,7 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
             payment_schedule_id,
             hire_date,
             leave_date,
+            retirement_processed,
             memo,
         )
         imported += 1
@@ -407,9 +421,12 @@ def list_employee_export_rows(conn) -> list[dict]:
                 "給与支給方式": get_employee_payment_schedule_display(e, conn),
                 "給与支給方式ID": row_get(e, "payment_schedule_id", "") or "",
                 "支給日": row_get(e, "payday_group", "") or "",
+                "標準報酬月額（健保）": row_get(e, "std_monthly_wage", 0) or 0,
+                "標準報酬月額（厚年）": row_get(e, "std_pension_wage", 0) or 0,
                 "生年月日": row_get(e, "birth_date", "") or "",
                 "入社日": row_get(e, "hire_date", "") or "",
                 "退職日": row_get(e, "leave_date", "") or "",
+                "退職処理済み": "1" if int(row_get(e, "retirement_processed", 0) or 0) else "0",
                 "源泉": row_get(e, "tax_type", "甲") or "甲",
                 "扶養人数": row_get(e, "dependents_count", 0) or 0,
                 "都道府県": row_get(e, "work_prefecture_name", "") or "",
@@ -973,6 +990,9 @@ def ensure_schema_migrations(conn):
 
     if not _column_exists(conn, "employees", "leave_date"):
         conn.execute("ALTER TABLE employees ADD COLUMN leave_date TEXT")
+
+    if not _column_exists(conn, "employees", "retirement_processed"):
+        conn.execute("ALTER TABLE employees ADD COLUMN retirement_processed INTEGER NOT NULL DEFAULT 0")
 
     # 給与支給タイミング
     if not _column_exists(conn, "employees", "payment_schedule_id"):

@@ -26,6 +26,19 @@ def get_setting(key: str, default: Any = None) -> Any:
     return load_settings().get(key, default)
 
 
+def save_settings(settings: dict[str, Any]) -> None:
+    SETTINGS_PATH.write_text(
+        json.dumps(settings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def set_setting(key: str, value: Any) -> None:
+    settings = load_settings()
+    settings[key] = value
+    save_settings(settings)
+
+
 def get_resources_dir_fallback(db_dir: Path) -> Path:
     """
     旧仕様互換：DBファイルの隣に resources フォルダを作る。

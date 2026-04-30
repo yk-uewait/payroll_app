@@ -8,6 +8,7 @@ from datetime import date
 import db
 from utils_dates import parse_month
 from bonus_batch_dialog import BonusBatchDialog
+from ui_window_utils import center_window
 
 class BonusEditorDialog(tk.Toplevel):
     """賞与 追加/編集（モーダル）"""
@@ -76,6 +77,7 @@ class BonusEditorDialog(tk.Toplevel):
         ttk.Button(btns, text="キャンセル", command=self.destroy).pack(side="right")
 
         self.wait_visibility()
+        center_window(self, master)
         self.focus_set()
 
     def _to_int(self, s: str) -> int:

@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import db
+from ui_window_utils import center_window
 
 
 class BonusBatchDialog(tk.Toplevel):
@@ -38,6 +39,7 @@ class BonusBatchDialog(tk.Toplevel):
         ttk.Button(btns, text="閉じる", command=self.destroy).pack(side="right", padx=5)
 
         self.refresh()
+        center_window(self, master)
 
     def _build_matrix_area(self):
         body = ttk.Frame(self)

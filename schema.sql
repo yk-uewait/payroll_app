@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS employees (
   birth_date       TEXT,  -- YYYY-MM-DD
   hire_date        TEXT,
   leave_date       TEXT,
+  retirement_processed INTEGER NOT NULL DEFAULT 0,
   memo             TEXT,
   std_monthly_wage INTEGER NOT NULL DEFAULT 0,
   std_pension_wage INTEGER NOT NULL DEFAULT 0,

@@ -4,6 +4,7 @@ import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 from utils_rates import parse_percent_to_rate, format_rate_to_percent_text
+from ui_window_utils import center_window
 
 def force_ime_off(widget):
     """
@@ -158,6 +159,7 @@ class EmpInsRateDialog(tk.Toplevel):
         ttk.Button(btns, text="保存", command=self.save).pack(side="right", padx=5)
  
         self.refresh()
+        center_window(self, master)
 
     def refresh(self):
         for i in self.tree.get_children():

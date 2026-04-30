@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from ui_window_utils import center_window
 
 class EmployeeEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, employee_id: int, on_saved=None):
@@ -33,6 +34,7 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_leave_y = tk.StringVar()
         self.var_leave_m = tk.StringVar()
         self.var_leave_d = tk.StringVar()
+        self.var_retirement_processed = tk.IntVar(value=0)
         self.txt_memo = None
 
         frm = ttk.Frame(self, padding=10)
@@ -123,6 +125,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Label(leave_frm, text="月").pack(side="left", padx=(2, 8))
         ttk.Entry(leave_frm, textvariable=self.var_leave_d, width=4, justify="right").pack(side="left")
         ttk.Label(leave_frm, text="日").pack(side="left", padx=(2, 0))
+        ttk.Checkbutton(leave_frm, text="退職処理済み", variable=self.var_retirement_processed)\
+            .pack(side="left", padx=(14, 0))
 
         ttk.Label(frm, text="メモ").grid(row=6, column=0, sticky="nw", padx=5, pady=5)
         self.txt_memo = tk.Text(frm, width=48, height=3, wrap="word")
@@ -146,6 +150,7 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self.close())
 
         # フォーカス
+        center_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
     def load_payment_schedule_options(self):
@@ -218,6 +223,7 @@ class EmployeeEditorDialog(tk.Toplevel):
                    birth_date,
                    hire_date,
                    leave_date,
+                   COALESCE(retirement_processed, 0) AS retirement_processed,
                    memo
             FROM employees
             WHERE employee_id = ?
@@ -252,6 +258,7 @@ class EmployeeEditorDialog(tk.Toplevel):
         self._split_date_to_vars(r["birth_date"], self.var_birth_y, self.var_birth_m, self.var_birth_d)
         self._split_date_to_vars(r["hire_date"], self.var_hire_y, self.var_hire_m, self.var_hire_d)
         self._split_date_to_vars(r["leave_date"], self.var_leave_y, self.var_leave_m, self.var_leave_d)
+        self.var_retirement_processed.set(int(r["retirement_processed"] or 0))
         self.txt_memo.delete("1.0", "end")
         self.txt_memo.insert("1.0", r["memo"] or "")
 
@@ -270,6 +277,7 @@ class EmployeeEditorDialog(tk.Toplevel):
             birth = self._build_date_from_vars(self.var_birth_y, self.var_birth_m, self.var_birth_d)
             hire_date = self._build_date_from_vars(self.var_hire_y, self.var_hire_m, self.var_hire_d)
             leave_date = self._build_date_from_vars(self.var_leave_y, self.var_leave_m, self.var_leave_d)
+            retirement_processed = int(self.var_retirement_processed.get() or 0)
             memo = self.txt_memo.get("1.0", "end-1c").strip() or None
 
         except ValueError as e:
@@ -326,6 +334,7 @@ class EmployeeEditorDialog(tk.Toplevel):
             payment_schedule_id,
             hire_date,
             leave_date,
+            retirement_processed,
             memo,
         )
 
@@ -342,35 +351,19 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.destroy()
 
 class EmployeesFrame(ttk.Frame):
+    COLUMNS = ("id", "code", "name", "dept", "pref", "payday", "birth_date", "tax_type", "deps", "memo")
+    DISPLAY_COLUMNS = ("code", "name", "dept", "pref", "payday", "birth_date", "tax_type", "deps", "memo")
+
     def __init__(self, master, conn):
         super().__init__(master)
         self.conn = conn
-        self._sort_state = {}
+        self._sort_state = {"active": {}, "retired": {}}
+        self.trees = {}
 
-        self.tree = ttk.Treeview(
-            self,
-            columns=("id", "code", "name", "dept", "pref", "payday", "birth_date", "tax_type", "deps"),
-            show="headings",
-            height=12)
-        
-        right_cols = {"id", "code", "deps"}
-        left_cols = {"payday", "birth_date"}
-
-        for c, t, w in [
-            ("id", "ID", 60),
-            ("code", "社員番号", 120),
-            ("name", "氏名", 160),
-            ("dept", "部署", 160),
-            ("pref", "都道府県", 110),
-            ("payday", "給与支給方式", 140),
-            ("birth_date", "生年月日", 120),
-            ("tax_type", "源泉", 70),
-            ("deps", "扶養", 70),
-        ]:
-            self.tree.heading(c, text=t, command=lambda col=c: self._sort_tree(col))
-            anchor = "e" if c in right_cols else ("w" if c in left_cols else "w")
-            self.tree.column(c, width=w, anchor=anchor)
-        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        self.trees["active"] = self._build_tree_tab("active", "在職中")
+        self.trees["retired"] = self._build_tree_tab("retired", "退職者")
 
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", padx=5, pady=5)
@@ -380,15 +373,52 @@ class EmployeesFrame(ttk.Frame):
         ttk.Button(btn_frame, text="インポート/エクスポート", command=self.open_io_dialog).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="閉じる", command=self.close_window).pack(side="right", padx=5)
 
-        self.tree.bind("<Double-1>", self.on_double_click)        
+        self.notebook.bind("<<NotebookTabChanged>>", lambda e: self._clear_tab_selection())
         self.refresh()
+
+    def _build_tree_tab(self, tab_key: str, label: str):
+        frame = ttk.Frame(self.notebook)
+        self.notebook.add(frame, text=label)
+
+        tree = ttk.Treeview(
+            frame,
+            columns=self.COLUMNS,
+            displaycolumns=self.DISPLAY_COLUMNS,
+            show="headings",
+            height=12,
+        )
+
+        for c, t, w in [
+            ("id", "ID", 60),
+            ("code", "社員番号", 76),
+            ("name", "氏名", 96),
+            ("dept", "部署", 96),
+            ("pref", "都道府県", 84),
+            ("payday", "給与支給方式", 116),
+            ("birth_date", "生年月日", 150),
+            ("tax_type", "源泉", 54),
+            ("deps", "扶養", 54),
+            ("memo", "メモ", 220),
+        ]:
+            tree.heading(c, text=t, command=lambda col=c, key=tab_key: self._sort_tree(key, col))
+            anchor = "w" if c == "memo" else "center"
+            stretch = c == "memo"
+            tree.column(c, width=w, anchor=anchor, stretch=stretch)
+
+        tree.pack(fill="both", expand=True)
+        tree.bind("<Double-1>", self.on_double_click)
+        return tree
 
     def refresh(self):
         import db
-        for i in self.tree.get_children():
-            self.tree.delete(i)
+        for tree in self.trees.values():
+            for i in tree.get_children():
+                tree.delete(i)
+
         for r in db.list_employees(self.conn):
-            self.tree.insert(
+            is_retired = int(r["retirement_processed"] or 0) if "retirement_processed" in r.keys() else 0
+            tree = self.trees["retired"] if is_retired else self.trees["active"]
+            tree.insert(
                 "",
                 "end",
                 values=(
@@ -401,8 +431,23 @@ class EmployeesFrame(ttk.Frame):
                     self._format_birth_date(r["birth_date"] if "birth_date" in r.keys() else ""),
                     r["tax_type"] if "tax_type" in r.keys() else "甲",
                     r["dependents_count"] if "dependents_count" in r.keys() else 0,
+                    (r["memo"] if "memo" in r.keys() else "") or "",
                 ),
             )
+
+    def _current_tree_key(self):
+        selected_tab = self.notebook.select()
+        for key, tree in self.trees.items():
+            if str(tree.master) == str(selected_tab):
+                return key
+        return "active"
+
+    def _current_tree(self):
+        return self.trees[self._current_tree_key()]
+
+    def _clear_tab_selection(self):
+        for tree in self.trees.values():
+            tree.selection_remove(tree.selection())
 
     def _format_birth_date(self, value):
         s = (value or "").strip()
@@ -410,7 +455,7 @@ class EmployeesFrame(ttk.Frame):
             return ""
         try:
             y, m, d = s.split("-")
-            return f"{int(y):04d}\u5e74{int(m):02d}\u6708{int(d):02d}\u65e5"
+            return f"{int(y):04d} 年 {int(m):02d} 月 {int(d):02d} 日"
         except Exception:
             return s
 
@@ -441,21 +486,22 @@ class EmployeesFrame(ttk.Frame):
 
         return (2, s)
 
-    def _sort_tree(self, col_name: str):
+    def _sort_tree(self, tab_key: str, col_name: str):
+        tree = self.trees[tab_key]
         rows = []
-        cols = self.tree["columns"]
-        for item_id in self.tree.get_children(""):
-            values = self.tree.item(item_id, "values")
+        cols = tree["columns"]
+        for item_id in tree.get_children(""):
+            values = tree.item(item_id, "values")
             row_map = {cols[i]: values[i] for i in range(len(cols))}
             rows.append((item_id, row_map))
 
-        reverse = self._sort_state.get(col_name, False)
+        reverse = self._sort_state[tab_key].get(col_name, False)
         rows.sort(key=lambda x: self._sort_value(col_name, x[1].get(col_name, "")), reverse=reverse)
 
         for idx, (item_id, _) in enumerate(rows):
-            self.tree.move(item_id, "", idx)
+            tree.move(item_id, "", idx)
 
-        self._sort_state[col_name] = not reverse
+        self._sort_state[tab_key][col_name] = not reverse
 
     def open_io_dialog(self):
         from employee_io_dialog import EmployeeIODialog
@@ -464,12 +510,13 @@ class EmployeesFrame(ttk.Frame):
         self.wait_window(dlg)
 
     def delete_selected(self):
-        sel = self.tree.selection()
+        tree = self._current_tree()
+        sel = tree.selection()
         if not sel:
             messagebox.showerror("削除エラー", "削除する社員を選択してください。")
             return
 
-        vals = self.tree.item(sel[0], "values")
+        vals = tree.item(sel[0], "values")
         if not vals:
             messagebox.showerror("削除エラー", "削除対象の社員情報を取得できませんでした。")
             return
@@ -511,12 +558,13 @@ class EmployeesFrame(ttk.Frame):
 
     def edit_selected(self):
         """選択社員を編集"""
-        sel = self.tree.selection()
+        tree = self._current_tree()
+        sel = tree.selection()
         if not sel:
             messagebox.showwarning("確認", "社員を選択してください。")
             return
 
-        vals = self.tree.item(sel[0], "values")
+        vals = tree.item(sel[0], "values")
         if not vals:
             return
 
@@ -524,11 +572,11 @@ class EmployeesFrame(ttk.Frame):
         self.open_editor(emp_id)
 
     def on_double_click(self, event):
-        sel = self.tree.selection()
+        tree = event.widget
+        sel = tree.selection()
         if not sel:
             return
-        # values の先頭は employee_id を入れているのでそれを使う
-        vals = self.tree.item(sel[0], "values")
+        vals = tree.item(sel[0], "values")
         if not vals:
             return
         emp_id = int(vals[0])
@@ -536,4 +584,4 @@ class EmployeesFrame(ttk.Frame):
 
     def open_editor(self, employee_id: int):
         dlg = EmployeeEditorDialog(self, self.conn, employee_id=employee_id, on_saved=self.refresh)
-        self.wait_window(dlg)  # 閉じるまで待つ（より確実にモーダル挙動に）
+        self.wait_window(dlg)

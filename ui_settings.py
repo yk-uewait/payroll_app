@@ -5,6 +5,7 @@ from ui_employees import EmployeesFrame
 from ui_payment_schedule import PaymentScheduleFrame
 from ui_empins_rate import EmpInsRateDialog
 from ui_social_rate import SocialRateDialog
+from ui_window_utils import center_window
 
 
 class FramePopupWindow(tk.Toplevel):
@@ -23,6 +24,7 @@ class FramePopupWindow(tk.Toplevel):
 
         self.inner_frame = frame_class(container, conn)
         self.inner_frame.pack(fill="both", expand=True)
+        center_window(self, parent)
 
 
 class SettingsFrame(ttk.Frame):

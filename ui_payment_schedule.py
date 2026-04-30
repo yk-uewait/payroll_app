@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from ui_window_utils import center_window
 
 CLOSING_MODE_MAP = {
     "same_month": "当月",
@@ -63,6 +64,7 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
 
         self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
+        center_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
     def load_schedule(self):
