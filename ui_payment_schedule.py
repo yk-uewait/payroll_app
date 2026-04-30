@@ -51,7 +51,7 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
         pay_day_frm.grid(row=2, column=1, sticky="w", padx=5, pady=5)
         ttk.Spinbox(pay_day_frm, from_=1, to=31, textvariable=self.var_pay_day, width=5).pack(side="left")
         ttk.Label(pay_day_frm, text=" 日").pack(side="left")
-        ttk.Label(frm, text="※ 支給日が末日の場合は31日としてください").grid(
+        ttk.Label(frm, text='※ 支給日が末日の場合は"31日"としてください').grid(
             row=3, column=1, sticky="w", padx=5, pady=(0, 5)
         )
 

@@ -1980,6 +1980,17 @@ def list_social_ins_rates(conn):
     )
     return cur.fetchall()
 
+def delete_social_ins_rate(conn, start_month: str, prefecture_name: str):
+    conn.execute(
+        """
+        DELETE FROM social_insurance_rates_v2
+        WHERE start_month = ?
+          AND prefecture_name = ?
+        """,
+        (start_month, prefecture_name or "DEFAULT"),
+    )
+    conn.commit()
+
 def get_social_ins_rate_for_month(conn, target_month: str, prefecture_name: str = ""):
     pref = (prefecture_name or "").strip()
 
