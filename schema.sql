@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS payment_schedules (
   closing_mode        TEXT NOT NULL,      -- 'same_month' or 'next_month'
   pay_day             INTEGER NOT NULL,   -- 1..28 推奨
   is_active           INTEGER NOT NULL DEFAULT 1,
+  memo                TEXT,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );

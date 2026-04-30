@@ -5,6 +5,7 @@ from ui_window_utils import center_window
 CLOSING_MODE_MAP = {
     "same_month": "当月",
     "next_month": "翌月",
+    "two_months_later": "翌々月",
 }
 # 逆引き（表示ラベル→キー）
 CLOSING_MODE_REVERSE_MAP = {v: k for k, v in CLOSING_MODE_MAP.items()}
@@ -26,9 +27,9 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
         self.grab_set()
 
         self.var_name = tk.StringVar()
-        self.var_closing_mode = tk.StringVar(value="same_month")
+        self.var_closing_mode = tk.StringVar(value=CLOSING_MODE_MAP["same_month"])
         self.var_pay_day = tk.IntVar(value=25)
-        self.var_is_active = tk.IntVar(value=1)
+        self.var_memo = tk.StringVar()
 
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill="both", expand=True)
@@ -36,23 +37,26 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
         ttk.Label(frm, text="名称").grid(row=0, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(frm, textvariable=self.var_name, width=28).grid(row=0, column=1, sticky="w", padx=5, pady=5)
 
-        ttk.Label(frm, text="支給タイミング").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="支給月").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         ttk.Combobox(
             frm,
             textvariable=self.var_closing_mode,
             values=list(CLOSING_MODE_MAP.values()),  # ["当月", "翌月"]
             state="readonly",
-            width=12,
+            width=5,
         ).grid(row=1, column=1, sticky="w", padx=5, pady=5)
 
         ttk.Label(frm, text="支給日").grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        ttk.Spinbox(frm, from_=1, to=31, textvariable=self.var_pay_day, width=8).grid(
-            row=2, column=1, sticky="w", padx=5, pady=5
+        pay_day_frm = ttk.Frame(frm)
+        pay_day_frm.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        ttk.Spinbox(pay_day_frm, from_=1, to=31, textvariable=self.var_pay_day, width=5).pack(side="left")
+        ttk.Label(pay_day_frm, text=" 日").pack(side="left")
+        ttk.Label(frm, text="※ 支給日が末日の場合は31日としてください").grid(
+            row=3, column=1, sticky="w", padx=5, pady=(0, 5)
         )
 
-        ttk.Checkbutton(frm, text="有効", variable=self.var_is_active).grid(
-            row=3, column=1, sticky="w", padx=5, pady=5
-        )
+        ttk.Label(frm, text="メモ").grid(row=4, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(frm, textvariable=self.var_memo, width=28).grid(row=4, column=1, sticky="w", padx=5, pady=5)
 
         btns = ttk.Frame(frm)
         btns.grid(row=5, column=0, columnspan=2, sticky="e", padx=5, pady=(10, 0))
@@ -81,13 +85,13 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
         self.var_closing_mode.set(CLOSING_MODE_MAP.get(mode_key, mode_key))
 
         self.var_pay_day.set(int(row["pay_day"] or 25))
-        self.var_is_active.set(int(row["is_active"] or 0))
+        self.var_memo.set(row["memo"] if "memo" in row.keys() and row["memo"] else "")
 
     def save(self):
         name = self.var_name.get().strip()
         closing_mode_label_str = self.var_closing_mode.get().strip()
         closing_mode = CLOSING_MODE_REVERSE_MAP.get(closing_mode_label_str, "")
-        is_active = int(self.var_is_active.get() or 0)
+        memo = self.var_memo.get().strip() or None
 
         try:
             pay_day = int(self.var_pay_day.get() or 0)
@@ -100,7 +104,7 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
             return
 
         if closing_mode not in CLOSING_MODE_MAP.keys():
-            messagebox.showerror("入力エラー", "支給タイミングが不正です。")
+            messagebox.showerror("入力エラー", "支給月が不正です。")
             return
 
         if not (1 <= pay_day <= 31):
@@ -115,8 +119,9 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
                 schedule_name=name,
                 closing_mode=closing_mode,
                 pay_day=pay_day,
-                is_active=is_active,
+                is_active=1,
                 payment_schedule_id=self.payment_schedule_id,
+                memo=memo,
             )
         except Exception as e:
             messagebox.showerror("保存エラー", f"保存に失敗しました。\n詳細: {e}")
@@ -140,39 +145,32 @@ class PaymentScheduleFrame(ttk.Frame):
         super().__init__(master)
         self.conn = conn
 
-        top = ttk.Frame(self)
-        top.pack(fill="x", padx=10, pady=10)
-
-        ttk.Button(top, text="追加", command=self.add_schedule).pack(side="left", padx=5)
-        ttk.Button(top, text="更新", command=self.edit_selected).pack(side="left", padx=5)
-        ttk.Button(top, text="有効/無効切替", command=self.toggle_active_selected).pack(side="left", padx=5)
-        ttk.Button(top, text="再読み込み", command=self.refresh).pack(side="right", padx=5)
-
         tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=(10, 5))
 
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical")
 
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("id", "name", "closing_mode", "pay_day", "is_active"),
+            columns=("id", "name", "closing_mode", "pay_day", "memo"),
+            displaycolumns=("name", "closing_mode", "pay_day", "memo"),
             show="headings",
-            height=14,
+            height=8,
             yscrollcommand=yscroll.set,
         )
         yscroll.config(command=self.tree.yview)
 
         self.tree.heading("id", text="ID")
         self.tree.heading("name", text="名称")
-        self.tree.heading("closing_mode", text="支給タイミング")
+        self.tree.heading("closing_mode", text="支給月")
         self.tree.heading("pay_day", text="支給日")
-        self.tree.heading("is_active", text="有効")
+        self.tree.heading("memo", text="メモ")
 
-        self.tree.column("id", width=60, anchor="e")
-        self.tree.column("name", width=220, anchor="w")
-        self.tree.column("closing_mode", width=110, anchor="center")
-        self.tree.column("pay_day", width=90, anchor="e")
-        self.tree.column("is_active", width=80, anchor="center")
+        self.tree.column("id", width=60, anchor="center", stretch=False)
+        self.tree.column("name", width=130, anchor="center", stretch=True)
+        self.tree.column("closing_mode", width=70, anchor="center", stretch=False)
+        self.tree.column("pay_day", width=70, anchor="center", stretch=False)
+        self.tree.column("memo", width=220, anchor="w", stretch=True)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
@@ -181,6 +179,12 @@ class PaymentScheduleFrame(ttk.Frame):
         tree_frame.grid_columnconfigure(0, weight=1)
 
         self.tree.bind("<Double-1>", self.on_double_click)
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(bottom, text="追加", command=self.add_schedule).pack(side="left", padx=5)
+        ttk.Button(bottom, text="削除", command=self.delete_selected).pack(side="left", padx=5)
+        ttk.Button(bottom, text="閉じる", command=self.close_window).pack(side="right", padx=5)
 
         self.refresh()
 
@@ -198,8 +202,8 @@ class PaymentScheduleFrame(ttk.Frame):
                     r["payment_schedule_id"],
                     r["schedule_name"],
                     closing_mode_label(r["closing_mode"]),
-                    r["pay_day"],
-                    "有効" if int(r["is_active"] or 0) == 1 else "無効",
+                    f'{int(r["pay_day"] or 0)} 日',
+                    (r["memo"] if "memo" in r.keys() else "") or "",
                 ),
             )
 
@@ -230,7 +234,7 @@ class PaymentScheduleFrame(ttk.Frame):
         )
         self.wait_window(dlg)
 
-    def toggle_active_selected(self):
+    def delete_selected(self):
         payment_schedule_id = self._selected_id()
         if payment_schedule_id is None:
             messagebox.showwarning("確認", "給与支給方式を選択してください。")
@@ -243,22 +247,31 @@ class PaymentScheduleFrame(ttk.Frame):
             messagebox.showerror("エラー", "対象データが見つかりません。")
             return
 
-        new_active = 0 if int(row["is_active"] or 0) == 1 else 1
+        if not messagebox.askyesno(
+            "削除確認",
+            "選択した給与支給方式を削除しますか？\n"
+            "過去データとの整合性を保つため、DBから完全削除せず一覧上は非表示にします。",
+        ):
+            return
 
         try:
-            db.upsert_payment_schedule(
-                self.conn,
-                schedule_name=row["schedule_name"],
-                closing_mode=row["closing_mode"],
-                pay_day=int(row["pay_day"] or 0),
-                is_active=new_active,
-                payment_schedule_id=payment_schedule_id,
-            )
+            deleted = db.soft_delete_payment_schedule(self.conn, payment_schedule_id)
         except Exception as e:
-            messagebox.showerror("更新エラー", f"有効/無効の切替に失敗しました。\n詳細: {e}")
+            messagebox.showerror("削除エラー", f"削除に失敗しました。\n詳細: {e}")
+            return
+
+        if not deleted:
+            messagebox.showerror("削除エラー", "削除対象の給与支給方式を更新できませんでした。")
             return
 
         self.refresh()
 
     def on_double_click(self, event):
         self.edit_selected()
+
+    def close_window(self):
+        win = self.winfo_toplevel()
+        try:
+            win.destroy()
+        except Exception:
+            pass

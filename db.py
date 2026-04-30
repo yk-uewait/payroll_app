@@ -39,7 +39,13 @@ def get_employee_payment_schedule_display(e, conn):
 def calc_pay_date(target_month: str, closing_mode: str, pay_day: int) -> str:
     y, m = map(int, target_month.split("-"))
 
+    month_offset = 0
     if closing_mode == "next_month":
+        month_offset = 1
+    elif closing_mode == "two_months_later":
+        month_offset = 2
+
+    for _ in range(month_offset):
         if m == 12:
             y += 1
             m = 1
@@ -74,17 +80,25 @@ def get_payment_schedule_by_id(conn, payment_schedule_id: int):
     )
     return cur.fetchone()
 
-def upsert_payment_schedule(conn, schedule_name: str, closing_mode: str, pay_day: int, is_active: int = 1, payment_schedule_id: int | None = None):
+def upsert_payment_schedule(
+    conn,
+    schedule_name: str,
+    closing_mode: str,
+    pay_day: int,
+    is_active: int = 1,
+    payment_schedule_id: int | None = None,
+    memo: str | None = None,
+):
     cur = conn.cursor()
     if payment_schedule_id is None:
         cur.execute(
             """
             INSERT INTO payment_schedules(
-                schedule_name, closing_mode, pay_day, is_active
+                schedule_name, closing_mode, pay_day, is_active, memo
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (schedule_name, closing_mode, pay_day, is_active),
+            (schedule_name, closing_mode, pay_day, is_active, memo),
         )
     else:
         cur.execute(
@@ -94,23 +108,48 @@ def upsert_payment_schedule(conn, schedule_name: str, closing_mode: str, pay_day
                 closing_mode=?,
                 pay_day=?,
                 is_active=?,
+                memo=?,
                 updated_at=datetime('now')
             WHERE payment_schedule_id=?
             """,
-            (schedule_name, closing_mode, pay_day, is_active, payment_schedule_id),
+            (schedule_name, closing_mode, pay_day, is_active, memo, payment_schedule_id),
         )
     conn.commit()
 
-def list_payment_schedules_all(conn):
+def list_payment_schedules_all(conn, include_inactive: bool = False):
+    cur = conn.cursor()
+    if include_inactive:
+        cur.execute(
+            """
+            SELECT *
+            FROM payment_schedules
+            ORDER BY is_active DESC, pay_day ASC, payment_schedule_id ASC
+            """
+        )
+    else:
+        cur.execute(
+            """
+            SELECT *
+            FROM payment_schedules
+            WHERE is_active = 1
+            ORDER BY pay_day ASC, payment_schedule_id ASC
+            """
+        )
+    return cur.fetchall()
+
+def soft_delete_payment_schedule(conn, payment_schedule_id: int) -> bool:
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT *
-        FROM payment_schedules
-        ORDER BY is_active DESC, pay_day ASC, payment_schedule_id ASC
-        """
+        UPDATE payment_schedules
+        SET is_active = 0,
+            updated_at = datetime('now')
+        WHERE payment_schedule_id = ? AND is_active = 1
+        """,
+        (payment_schedule_id,),
     )
-    return cur.fetchall()
+    conn.commit()
+    return cur.rowcount > 0
 
 def connect(db_path) -> sqlite3.Connection:
     """
@@ -1015,11 +1054,14 @@ def ensure_schema_migrations(conn):
           closing_mode        TEXT NOT NULL,
           pay_day             INTEGER NOT NULL,
           is_active           INTEGER NOT NULL DEFAULT 1,
+          memo                TEXT,
           created_at          TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
     )
+    if not _column_exists(conn, "payment_schedules", "memo"):
+        conn.execute("ALTER TABLE payment_schedules ADD COLUMN memo TEXT")
 
     # -------------------------------------------------
     # payroll_monthly

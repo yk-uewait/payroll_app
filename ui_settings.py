@@ -91,7 +91,7 @@ class SettingsFrame(ttk.Frame):
             title="給与支給方式",
             frame_class=PaymentScheduleFrame,
             conn=self.conn,
-            geometry="900x650",
+            geometry="630x325",
         )
         win.focus()
 
