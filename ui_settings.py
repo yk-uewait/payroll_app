@@ -81,7 +81,7 @@ class SettingsFrame(ttk.Frame):
             title="社員管理",
             frame_class=EmployeesFrame,
             conn=self.conn,
-            geometry="1100x700",
+            geometry="1100x560",
         )
         win.focus()
 
