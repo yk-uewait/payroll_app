@@ -34,6 +34,8 @@ class PayrollEditorDialog(tk.Toplevel):
             messagebox.showerror("エラー", "対象データが見つかりません。")
             self.destroy()
             return
+        self.dynamic_item_vars = {}
+        self.dynamic_item_sources = {}
 
         # 表示名（後でSettings化する。今回は暫定で固定）
         self.pay_free_names = pay_free_names or [f"支給自由{i}" for i in range(1, 6)]
@@ -72,10 +74,23 @@ class PayrollEditorDialog(tk.Toplevel):
         self.lbl_total_pay = ttk.Label(summary, text="総支給：0円")
         self.lbl_total_deduct = ttk.Label(summary, text="控除合計：0円")
         self.lbl_net = ttk.Label(summary, text="手取り：0円")
+        self.lbl_dynamic_pay = ttk.Label(summary, text="動的支給合計（参考）：0円")
+        self.lbl_dynamic_taxable = ttk.Label(summary, text="動的課税支給額（参考）：0円")
+        self.lbl_dynamic_nontax = ttk.Label(summary, text="動的非課税支給額（参考）：0円")
+        self.lbl_dynamic_emp_base = ttk.Label(summary, text="動的雇用保険対象額（参考）：0円")
+        self.lbl_dynamic_social_base = ttk.Label(summary, text="動的社会保険対象額（参考）：0円")
+        self.lbl_dynamic_custom_deduct = ttk.Label(summary, text="動的会社独自控除合計（参考）：0円")
 
         self.lbl_total_pay.pack(anchor="w", padx=10, pady=2)
         self.lbl_total_deduct.pack(anchor="w", padx=10, pady=2)
         self.lbl_net.pack(anchor="w", padx=10, pady=2)
+        ttk.Separator(summary, orient="horizontal").pack(fill="x", padx=10, pady=4)
+        self.lbl_dynamic_pay.pack(anchor="w", padx=10, pady=1)
+        self.lbl_dynamic_taxable.pack(anchor="w", padx=10, pady=1)
+        self.lbl_dynamic_nontax.pack(anchor="w", padx=10, pady=1)
+        self.lbl_dynamic_emp_base.pack(anchor="w", padx=10, pady=1)
+        self.lbl_dynamic_social_base.pack(anchor="w", padx=10, pady=1)
+        self.lbl_dynamic_custom_deduct.pack(anchor="w", padx=10, pady=1)
 
         footer = ttk.Frame(self)
         footer.pack(fill="x", padx=10, pady=10)
@@ -155,12 +170,66 @@ class PayrollEditorDialog(tk.Toplevel):
         preset = ttk.Frame(frm)
         preset.pack(fill="x", pady=(10,0))
         # 合計表示（入力ベース）
+        self._build_dynamic_items_section(frm, "pay")
 
     def _apply_preset(self, taxable: bool, social: bool, emp: bool):
         for i in range(1, 6):
             self.vars[f"pay_free{i}_is_taxable"].set(1 if taxable else 0)
             self.vars[f"pay_free{i}_is_social_base"].set(1 if social else 0)
             self.vars[f"pay_free{i}_is_employment_base"].set(1 if emp else 0)
+
+    def _build_dynamic_items_section(self, parent, item_kind: str):
+        import db
+
+        items = [r for r in db.get_applicable_payroll_items(self.conn, int(self.row["employee_id"])) if r["item_kind"] == item_kind]
+        title = "動的支給明細（参考入力）" if item_kind == "pay" else "動的控除明細（参考入力）"
+        section = ttk.LabelFrame(parent, text=title)
+        section.pack(fill="x", pady=(10, 0))
+
+        if not items:
+            ttk.Label(section, text="該当する項目はありません。").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+            return
+
+        ttk.Label(section, text="項目").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(section, text="金額").grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(section, text="状態").grid(row=0, column=3, padx=5, pady=5, sticky="w")
+
+        saved_map = db.get_payroll_monthly_item_value_map(self.conn, self.payroll_id)
+        target_month = self.row["target_month"]
+        total_var = tk.StringVar(value="0")
+        self.dynamic_item_vars[(item_kind, "_total")] = total_var
+
+        for idx, item in enumerate(items, start=1):
+            item_id = int(item["id"])
+            saved = saved_map.get(item_id)
+            source = "standard"
+            locked = False
+            if saved:
+                amount = int(saved["amount"] or 0)
+                source = saved["source"] or "manual"
+                locked = bool(int(saved["is_locked"] or 0))
+            else:
+                amount = db.get_employee_standard_amount(self.conn, int(self.row["employee_id"]), item_id, target_month)
+                if amount == 0 and item["code"] in {"officer_pay", "base_salary", "overtime_pay", "commute_nontax"}:
+                    amount = int(self.row[item["code"]] or 0)
+
+            ttk.Label(section, text=item["name"]).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+            var = tk.StringVar(value=str(amount))
+            ent = ttk.Entry(section, textvariable=var, width=16, justify="right")
+            ent.grid(row=idx, column=1, padx=5, pady=4, sticky="w")
+            ttk.Label(section, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
+            status = "ロック" if locked else ("保存済" if saved else "標準/0")
+            ttk.Label(section, text=status).grid(row=idx, column=3, padx=5, pady=4, sticky="w")
+            if locked:
+                ent.configure(state="disabled")
+            var.trace_add("write", lambda *_: self._update_dynamic_totals())
+            self.dynamic_item_vars[item_id] = var
+            self.dynamic_item_sources[item_id] = {"item": item, "source": source, "locked": locked, "entry": ent}
+
+        ttk.Label(section, text="合計").grid(row=len(items) + 1, column=0, padx=5, pady=(8, 5), sticky="e")
+        ttk.Label(section, textvariable=total_var).grid(row=len(items) + 1, column=1, padx=5, pady=(8, 5), sticky="e")
+        ttk.Label(section, text="円").grid(row=len(items) + 1, column=2, padx=5, pady=(8, 5), sticky="w")
+        self._update_dynamic_totals()
 
     def _build_deduct_tab(self):
         frm = ttk.Frame(self.tab_deduct)
@@ -249,6 +318,8 @@ class PayrollEditorDialog(tk.Toplevel):
             name = self.deduct_free_names[i-1]
             add_money_row(free, i-1, name, f"deduct_free{i}")
 
+        self._build_dynamic_items_section(frm, "deduction")
+
     def _build_note_tab(self):
         frm = ttk.Frame(self.tab_note)
         frm.pack(fill="both", expand=True, padx=10, pady=10)
@@ -311,6 +382,51 @@ class PayrollEditorDialog(tk.Toplevel):
         self.lbl_total_deduct.config(text=f"控除合計：{total_deduct:,}円")
         self.lbl_net.config(text=f"手取り：{net:,}円")
 
+    def _update_dynamic_totals(self):
+        totals = {
+            "pay": 0,
+            "deduction": 0,
+            "taxable_pay": 0,
+            "non_taxable_pay": 0,
+            "employment_insurance_base": 0,
+            "social_insurance_base": 0,
+        }
+        for item_id, meta in self.dynamic_item_sources.items():
+            if not isinstance(item_id, int):
+                continue
+            item = meta["item"]
+            var = self.dynamic_item_vars.get(item_id)
+            if not var:
+                continue
+            try:
+                amount = _to_int(var.get())
+            except Exception:
+                amount = 0
+            item_kind = item["item_kind"]
+            if item_kind in {"pay", "deduction"}:
+                totals[item_kind] += amount
+            if item_kind == "pay":
+                if int(item["is_taxable"] or 0):
+                    totals["taxable_pay"] += amount
+                else:
+                    totals["non_taxable_pay"] += amount
+                if int(item["is_employment_insurance_base"] or 0):
+                    totals["employment_insurance_base"] += amount
+                if int(item["is_social_insurance_base"] or 0):
+                    totals["social_insurance_base"] += amount
+        for kind in ("pay", "deduction"):
+            amount = totals[kind]
+            total_var = self.dynamic_item_vars.get((kind, "_total"))
+            if total_var:
+                total_var.set(f"{amount:,}")
+        if hasattr(self, "lbl_dynamic_pay"):
+            self.lbl_dynamic_pay.config(text=f"動的支給合計（参考）：{totals['pay']:,}円")
+            self.lbl_dynamic_taxable.config(text=f"動的課税支給額（参考）：{totals['taxable_pay']:,}円")
+            self.lbl_dynamic_nontax.config(text=f"動的非課税支給額（参考）：{totals['non_taxable_pay']:,}円")
+            self.lbl_dynamic_emp_base.config(text=f"動的雇用保険対象額（参考）：{totals['employment_insurance_base']:,}円")
+            self.lbl_dynamic_social_base.config(text=f"動的社会保険対象額（参考）：{totals['social_insurance_base']:,}円")
+            self.lbl_dynamic_custom_deduct.config(text=f"動的会社独自控除合計（参考）：{totals['deduction']:,}円")
+
     def _clear_resident_override(self):
         # 上書き入力を空にする（保存時に自動へ戻る）
         if hasattr(self, "var_resident_override"):
@@ -351,7 +467,52 @@ class PayrollEditorDialog(tk.Toplevel):
             return
 
         import db
+        dynamic_data = {}
+        fixed_sync = {}
+        fixed_sync_codes = {"officer_pay", "base_salary", "overtime_pay", "commute_nontax"}
+        try:
+            for item_id, meta in self.dynamic_item_sources.items():
+                if not isinstance(item_id, int):
+                    continue
+                if meta.get("locked"):
+                    continue
+                item = meta["item"]
+                amount = _to_int(self.dynamic_item_vars[item_id].get())
+                dynamic_data[item_id] = (item, amount, meta.get("source") or "manual")
+                if item["code"] in fixed_sync_codes:
+                    fixed_sync[item["code"]] = amount
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e))
+            return
+
+        for key, amount in fixed_sync.items():
+            if key in data:
+                data[key] = amount
+
         db.update_payroll_inputs(self.conn, self.payroll_id, data)
+        try:
+            year, month = [int(x) for x in str(self.row["target_month"]).split("-")]
+            for item_id, (item, amount, source) in dynamic_data.items():
+                db.upsert_payroll_monthly_item_value(
+                    self.conn,
+                    self.payroll_id,
+                    int(self.row["employee_id"]),
+                    year,
+                    month,
+                    item_id,
+                    item["item_kind"],
+                    amount,
+                    "manual",
+                    0,
+                    None,
+                )
+        except Exception as e:
+            messagebox.showerror("保存エラー", f"動的支給控除明細の保存に失敗しました。\n{e}")
+            return
+        try:
+            db.recalc_target_month(self.conn, str(self.row["target_month"]))
+        except Exception as e:
+            messagebox.showwarning("再計算エラー", f"保存後の自動再計算でエラーが発生しました。\n{e}")
         # 住民税 上書きの反映（空なら解除＝自動へ）
         override_text = (self.var_resident_override.get() or "").strip() if hasattr(self, "var_resident_override") else ""
         reason_text = (self.var_resident_reason.get() or "").strip() if hasattr(self, "var_resident_reason") else ""

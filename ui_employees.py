@@ -18,6 +18,12 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_code = tk.StringVar()
         self.var_name = tk.StringVar()
         self.var_dept = tk.StringVar()
+        self.var_department_id = tk.StringVar()
+        self.var_position_id = tk.StringVar()
+        self.var_employment_type_id = tk.StringVar()
+        self.department_options = []
+        self.position_options = []
+        self.employment_type_options = []
         self.var_payment_schedule_id = tk.StringVar()
         self.payment_schedule_options = []
         self.var_std_health = tk.StringVar(value="0")
@@ -49,7 +55,14 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Entry(frm, textvariable=self.var_name, width=20).grid(row=0, column=3, sticky="w", padx=5, pady=5)
 
         ttk.Label(frm, text="部署").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(frm, textvariable=self.var_dept, width=20).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        self.cmb_department = ttk.Combobox(
+            frm,
+            textvariable=self.var_department_id,
+            values=self.load_named_master_options("departments", self.department_options),
+            width=18,
+            state="readonly",
+        )
+        self.cmb_department.grid(row=1, column=1, sticky="w", padx=5, pady=5)
 
         ttk.Label(frm, text="給与支給方式").grid(row=1, column=2, sticky="w", padx=5, pady=5)
         self.cmb_payment_schedule = ttk.Combobox(
@@ -68,6 +81,26 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Label(frm, text="扶養人数").grid(row=2, column=2, sticky="w", padx=5, pady=5)
         ttk.Entry(frm, textvariable=self.var_dependents, width=6, justify="right")\
             .grid(row=2, column=3, sticky="w", padx=5, pady=5)        
+
+        ttk.Label(frm, text="役職").grid(row=8, column=0, sticky="w", padx=5, pady=5)
+        self.cmb_position = ttk.Combobox(
+            frm,
+            textvariable=self.var_position_id,
+            values=self.load_named_master_options("positions", self.position_options),
+            width=18,
+            state="readonly",
+        )
+        self.cmb_position.grid(row=8, column=1, sticky="w", padx=5, pady=5)
+
+        ttk.Label(frm, text="雇用区分").grid(row=8, column=2, sticky="w", padx=5, pady=5)
+        self.cmb_employment_type = ttk.Combobox(
+            frm,
+            textvariable=self.var_employment_type_id,
+            values=self.load_named_master_options("employment_types", self.employment_type_options),
+            width=18,
+            state="readonly",
+        )
+        self.cmb_employment_type.grid(row=8, column=3, sticky="w", padx=5, pady=5)
 
         ttk.Label(frm, text="標準報酬月額（健保）").grid(row=3, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(frm, textvariable=self.var_std_health, width=20, justify="right")\
@@ -134,7 +167,7 @@ class EmployeeEditorDialog(tk.Toplevel):
 
         # ボタン
         btns = ttk.Frame(frm)
-        btns.grid(row=7, column=0, columnspan=4, sticky="e", padx=5, pady=(10, 0))
+        btns.grid(row=9, column=0, columnspan=4, sticky="e", padx=5, pady=(10, 0))
         ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
 
@@ -162,6 +195,33 @@ class EmployeeEditorDialog(tk.Toplevel):
             label = r["schedule_name"]
             self.payment_schedule_options.append((label, r["payment_schedule_id"]))
         return [x[0] for x in self.payment_schedule_options]
+
+    def load_named_master_options(self, table: str, target_options: list):
+        import db
+
+        rows = db.list_named_master(self.conn, table)
+        target_options.clear()
+        target_options.append(("", None))
+        for r in rows:
+            target_options.append((r["name"], r["id"]))
+        return [x[0] for x in target_options]
+
+    def _selected_master_id(self, var: tk.StringVar, options: list):
+        selected = var.get().strip()
+        for label, row_id in options:
+            if label == selected:
+                return row_id
+        return None
+
+    def _set_master_by_id(self, var: tk.StringVar, options: list, row_id):
+        if not row_id:
+            var.set("")
+            return
+        for label, option_id in options:
+            if option_id and int(option_id) == int(row_id):
+                var.set(label)
+                return
+        var.set("")
 
     def _split_date_to_vars(self, date_str, var_y, var_m, var_d):
         if not date_str:
@@ -215,7 +275,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         cur = self.conn.cursor()
         cur.execute(
             """
-            SELECT employee_id, employee_code, name_kanji, department, payday_group, payment_schedule_id, work_prefecture_name,
+            SELECT employee_id, employee_code, name_kanji, department, department_id, position_id, employment_type_id,
+                   payday_group, payment_schedule_id, work_prefecture_name,
                    COALESCE(std_monthly_wage, 0) AS std_monthly_wage,
                    COALESCE(std_pension_wage, 0) AS std_pension_wage,
                    COALESCE(tax_type, '甲') AS tax_type,
@@ -239,6 +300,9 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_code.set(r["employee_code"])
         self.var_name.set(r["name_kanji"])
         self.var_dept.set(r["department"] or "")
+        self._set_master_by_id(self.var_department_id, self.department_options, r["department_id"] if "department_id" in r.keys() else None)
+        self._set_master_by_id(self.var_position_id, self.position_options, r["position_id"] if "position_id" in r.keys() else None)
+        self._set_master_by_id(self.var_employment_type_id, self.employment_type_options, r["employment_type_id"] if "employment_type_id" in r.keys() else None)
         if r["payment_schedule_id"]:
             self.set_payment_schedule_by_id(r["payment_schedule_id"])
         else:
@@ -265,7 +329,10 @@ class EmployeeEditorDialog(tk.Toplevel):
     def save(self):
         code = self.var_code.get().strip()
         name = self.var_name.get().strip()
-        dept = self.var_dept.get().strip()
+        department_id = self._selected_master_id(self.var_department_id, self.department_options)
+        position_id = self._selected_master_id(self.var_position_id, self.position_options)
+        employment_type_id = self._selected_master_id(self.var_employment_type_id, self.employment_type_options)
+        dept = self.var_department_id.get().strip()
         payment_schedule_id = self.get_selected_payment_schedule_id()
 
         try:
@@ -336,6 +403,9 @@ class EmployeeEditorDialog(tk.Toplevel):
             leave_date,
             retirement_processed,
             memo,
+            department_id,
+            position_id,
+            employment_type_id,
         )
 
         if callable(self.on_saved):

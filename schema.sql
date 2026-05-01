@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS employees (
   employee_code    TEXT UNIQUE,
   name_kanji       TEXT NOT NULL,
   department       TEXT,
+  department_id    INTEGER,
+  position_id      INTEGER,
+  employment_type_id INTEGER,
   payday_group     INTEGER NOT NULL DEFAULT 25,  -- 15 or 25
   payment_schedule_id INTEGER,
   is_deleted       INTEGER NOT NULL DEFAULT 0,
@@ -278,4 +281,133 @@ CREATE TABLE IF NOT EXISTS social_insurance_rates_v2 (
   created_at           TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(start_month, prefecture_name)
+);
+
+CREATE TABLE IF NOT EXISTS company_settings (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  company_name  TEXT NOT NULL DEFAULT '',
+  company_kana  TEXT NOT NULL DEFAULT '',
+  postal_code   TEXT NOT NULL DEFAULT '',
+  address       TEXT NOT NULL DEFAULT '',
+  phone         TEXT NOT NULL DEFAULT '',
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS departments (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS positions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS employment_types (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS payroll_item_categories (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  code          TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  item_kind     TEXT NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS payroll_items (
+  id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+  code                          TEXT NOT NULL UNIQUE,
+  name                          TEXT NOT NULL,
+  item_kind                     TEXT NOT NULL,
+  category_id                   INTEGER,
+  is_system                     INTEGER NOT NULL DEFAULT 0,
+  is_active                     INTEGER NOT NULL DEFAULT 1,
+  is_taxable                    INTEGER NOT NULL DEFAULT 0,
+  is_social_insurance_base      INTEGER NOT NULL DEFAULT 0,
+  is_employment_insurance_base  INTEGER NOT NULL DEFAULT 0,
+  is_commute                    INTEGER NOT NULL DEFAULT 0,
+  display_order                 INTEGER NOT NULL DEFAULT 0,
+  memo                          TEXT,
+  created_at                    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at                    TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(category_id) REFERENCES payroll_item_categories(id)
+);
+
+CREATE TABLE IF NOT EXISTS payroll_item_assignments (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id             INTEGER NOT NULL,
+  target_type         TEXT NOT NULL DEFAULT 'all',
+  department_id       INTEGER,
+  position_id         INTEGER,
+  employment_type_id  INTEGER,
+  employee_id         INTEGER,
+  action              TEXT NOT NULL DEFAULT 'include',
+  is_active           INTEGER NOT NULL DEFAULT 1,
+  display_order       INTEGER NOT NULL DEFAULT 0,
+  memo                TEXT,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(item_id) REFERENCES payroll_items(id),
+  FOREIGN KEY(department_id) REFERENCES departments(id),
+  FOREIGN KEY(position_id) REFERENCES positions(id),
+  FOREIGN KEY(employment_type_id) REFERENCES employment_types(id),
+  FOREIGN KEY(employee_id) REFERENCES employees(employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS employee_payroll_item_standard_values (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id   INTEGER NOT NULL,
+  item_id       INTEGER NOT NULL,
+  start_month   TEXT NOT NULL,
+  amount        INTEGER NOT NULL DEFAULT 0,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(employee_id, item_id, start_month),
+  FOREIGN KEY(employee_id) REFERENCES employees(employee_id),
+  FOREIGN KEY(item_id) REFERENCES payroll_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS payroll_monthly_item_values (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  monthly_id    INTEGER NOT NULL,
+  employee_id   INTEGER NOT NULL,
+  year          INTEGER NOT NULL,
+  month         INTEGER NOT NULL,
+  item_id       INTEGER NOT NULL,
+  item_kind     TEXT NOT NULL,
+  amount        INTEGER NOT NULL DEFAULT 0,
+  source        TEXT NOT NULL DEFAULT 'manual',
+  is_locked     INTEGER NOT NULL DEFAULT 0,
+  memo          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(monthly_id, item_id),
+  FOREIGN KEY(monthly_id) REFERENCES payroll_monthly(payroll_id),
+  FOREIGN KEY(employee_id) REFERENCES employees(employee_id),
+  FOREIGN KEY(item_id) REFERENCES payroll_items(id)
 );

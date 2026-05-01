@@ -135,7 +135,7 @@ class App(tk.Tk):
             path = filedialog.asksaveasfilename(
                 title="新しい給与データファイルを作成",
                 initialdir=initial_dir,
-                initialfile="payroll.db",
+                initialfile="任意のファイル名",
                 defaultextension=".db",
                 filetypes=[
                     ("SQLite DB", "*.db"),

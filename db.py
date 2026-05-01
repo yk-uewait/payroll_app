@@ -184,6 +184,14 @@ def row_get(r, key, default=None):
         
 WITHHOLDING_YEAR_DEFAULT = 2026  # 令和8年
 
+# Dynamic payroll item migration flags.
+# Keep tax/insurance calculations on the legacy fixed-column path until each
+# area is verified in a later phase.
+USE_DYNAMIC_ITEMS_FOR_TOTALS = True
+USE_DYNAMIC_ITEMS_FOR_EMPLOYMENT_INSURANCE = True
+USE_DYNAMIC_ITEMS_FOR_TAXABLE_PAY = True
+USE_DYNAMIC_ITEMS_FOR_SOCIAL_INSURANCE_BASE = False
+
 
 def round_half_up(value: float) -> int:
     """0.5以上切り上げ、0.5未満切り捨て"""
@@ -235,6 +243,7 @@ def init_db(conn: sqlite3.Connection, schema_path: Path) -> None:
     # 既存DBに必要な列がなければ追加
     ensure_schema_migrations(conn)
     seed_payment_schedules(conn)
+    seed_phase1_masters(conn)
 
 def seed_payment_schedules(conn):
     cur = conn.cursor()
@@ -251,6 +260,122 @@ def seed_payment_schedules(conn):
             (schedule_name, closing_mode, pay_day),
         )
     conn.commit()    
+
+def _upsert_seed(conn, table: str, key_col: str, key_val, values: dict):
+    cols = [key_col] + list(values.keys())
+    placeholders = ", ".join(["?"] * len(cols))
+    sql = f"""
+        INSERT OR IGNORE INTO {table}({", ".join(cols)})
+        VALUES ({placeholders})
+    """
+    conn.execute(sql, [key_val] + list(values.values()))
+
+def seed_phase1_masters(conn):
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO company_settings(id, company_name)
+        VALUES (1, '')
+        """
+    )
+
+    for idx, name in enumerate(["役員", "正社員", "契約社員", "パート", "アルバイト"], start=1):
+        _upsert_seed(
+            conn,
+            "employment_types",
+            "name",
+            name,
+            {"display_order": idx * 10, "is_active": 1, "memo": None},
+        )
+
+    categories = [
+        ("basic_pay", "基本給系", "pay", 10),
+        ("officer_pay", "役員報酬系", "pay", 20),
+        ("allowance", "手当", "pay", 30),
+        ("overtime", "残業代", "pay", 40),
+        ("commute", "通勤手当", "pay", 50),
+        ("deduction", "控除", "deduction", 60),
+        ("system_deduction", "システム控除", "system_deduction", 70),
+        ("other", "その他", "other", 90),
+    ]
+    for code, name, kind, order in categories:
+        _upsert_seed(
+            conn,
+            "payroll_item_categories",
+            "code",
+            code,
+            {"name": name, "item_kind": kind, "display_order": order, "is_active": 1, "memo": None},
+        )
+
+    cat_map = {r["code"]: r["id"] for r in conn.execute("SELECT id, code FROM payroll_item_categories")}
+    items = [
+        ("officer_pay", "役員報酬", "pay", "officer_pay", 0, 1, 1, 1, 0, 0, 10),
+        ("base_salary", "基本給", "pay", "basic_pay", 0, 1, 1, 1, 1, 0, 20),
+        ("overtime_pay", "残業手当", "pay", "overtime", 0, 1, 1, 1, 1, 0, 30),
+        ("commute_nontax", "非課税通勤手当", "pay", "commute", 0, 1, 0, 1, 1, 1, 40),
+        ("health_ins_employee", "健康保険料", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1010),
+        ("care_ins_employee", "介護保険料", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1020),
+        ("childcare_support_employee", "子ども・子育て支援金", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1030),
+        ("pension_ins_employee", "厚生年金保険料", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1040),
+        ("emp_ins_employee", "雇用保険料", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1050),
+        ("withholding_tax", "源泉所得税", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1060),
+        ("resident_tax", "住民税", "system_deduction", "system_deduction", 1, 1, 0, 0, 0, 0, 1070),
+    ]
+    for code, name, kind, cat_code, is_system, is_active, taxable, social, emp, commute, order in items:
+        _upsert_seed(
+            conn,
+            "payroll_items",
+            "code",
+            code,
+            {
+                "name": name,
+                "item_kind": kind,
+                "category_id": cat_map.get(cat_code),
+                "is_system": is_system,
+                "is_active": is_active,
+                "is_taxable": taxable,
+                "is_social_insurance_base": social,
+                "is_employment_insurance_base": emp,
+                "is_commute": commute,
+                "display_order": order,
+                "memo": None,
+            },
+        )
+    item_map = {r["code"]: r["id"] for r in conn.execute("SELECT id, code FROM payroll_items")}
+    employment_map = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM employment_types")}
+    assignment_seeds = [
+        ("officer_pay", "employment_type", employment_map.get("役員"), "include", 10),
+        ("base_salary", "employment_type", employment_map.get("役員"), "exclude", 20),
+        ("base_salary", "all", None, "include", 21),
+        ("overtime_pay", "employment_type", employment_map.get("役員"), "exclude", 30),
+        ("overtime_pay", "all", None, "include", 31),
+        ("commute_nontax", "all", None, "include", 40),
+    ]
+    for item_code, target_type, employment_type_id, action, order in assignment_seeds:
+        item_id = item_map.get(item_code)
+        if not item_id:
+            continue
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM payroll_item_assignments
+            WHERE item_id = ?
+              AND target_type = ?
+              AND COALESCE(employment_type_id, 0) = COALESCE(?, 0)
+              AND action = ?
+            """,
+            (item_id, target_type, employment_type_id, action),
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                """
+                INSERT INTO payroll_item_assignments(
+                  item_id, target_type, employment_type_id, action, is_active, display_order
+                )
+                VALUES (?, ?, ?, ?, 1, ?)
+                """,
+                (item_id, target_type, employment_type_id, action, order),
+            )
+    conn.commit()
 
 def upsert_employee(
     conn,
@@ -269,6 +394,9 @@ def upsert_employee(
     leave_date=None,
     retirement_processed=0,
     memo=None,
+    department_id=None,
+    position_id=None,
+    employment_type_id=None,
 ):
     cur = conn.cursor()
     cur.execute(
@@ -277,9 +405,10 @@ def upsert_employee(
           employee_code, name_kanji, department, payday_group,
           std_monthly_wage, std_pension_wage,
           tax_type, dependents_count, work_prefecture_name, birth_date,
-          payment_schedule_id, hire_date, leave_date, retirement_processed, memo
+          payment_schedule_id, hire_date, leave_date, retirement_processed, memo,
+          department_id, position_id, employment_type_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_code) DO UPDATE SET
           name_kanji=excluded.name_kanji,
           department=excluded.department,
@@ -297,6 +426,9 @@ def upsert_employee(
           leave_date=excluded.leave_date,
           retirement_processed=excluded.retirement_processed,
           memo=excluded.memo,
+          department_id=excluded.department_id,
+          position_id=excluded.position_id,
+          employment_type_id=excluded.employment_type_id,
           updated_at=datetime('now')
         """,
         (
@@ -315,6 +447,9 @@ def upsert_employee(
             leave_date,
             int(retirement_processed or 0),
             memo,
+            department_id,
+            position_id,
+            employment_type_id,
         ),
     )
     conn.commit()
@@ -341,6 +476,651 @@ def soft_delete_employee(conn, employee_id: int) -> bool:
     )
     conn.commit()
     return cur.rowcount > 0
+
+def get_company_settings(conn):
+    conn.execute("INSERT OR IGNORE INTO company_settings(id, company_name) VALUES (1, '')")
+    conn.commit()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM company_settings WHERE id = 1")
+    return cur.fetchone()
+
+def upsert_company_settings(conn, company_name, company_kana="", postal_code="", address="", phone="", memo=None):
+    conn.execute(
+        """
+        INSERT INTO company_settings(id, company_name, company_kana, postal_code, address, phone, memo)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          company_name=excluded.company_name,
+          company_kana=excluded.company_kana,
+          postal_code=excluded.postal_code,
+          address=excluded.address,
+          phone=excluded.phone,
+          memo=excluded.memo,
+          updated_at=datetime('now')
+        """,
+        (company_name, company_kana, postal_code, address, phone, memo),
+    )
+    conn.commit()
+
+def list_named_master(conn, table: str, include_inactive: bool = False):
+    if table not in {"departments", "positions", "employment_types"}:
+        raise ValueError("invalid master table")
+    where = "" if include_inactive else "WHERE is_active = 1"
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT *
+        FROM {table}
+        {where}
+        ORDER BY is_active DESC, display_order ASC, id ASC
+        """
+    )
+    return cur.fetchall()
+
+def get_named_master_by_id(conn, table: str, row_id: int):
+    if table not in {"departments", "positions", "employment_types"}:
+        raise ValueError("invalid master table")
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))
+    return cur.fetchone()
+
+def upsert_named_master(conn, table: str, name: str, display_order: int = 0, is_active: int = 1, memo=None, row_id=None):
+    if table not in {"departments", "positions", "employment_types"}:
+        raise ValueError("invalid master table")
+    if row_id is None:
+        conn.execute(
+            f"""
+            INSERT INTO {table}(name, display_order, is_active, memo)
+            VALUES (?, ?, ?, ?)
+            """,
+            (name, display_order, is_active, memo),
+        )
+    else:
+        conn.execute(
+            f"""
+            UPDATE {table}
+            SET name=?, display_order=?, is_active=?, memo=?, updated_at=datetime('now')
+            WHERE id=?
+            """,
+            (name, display_order, is_active, memo, row_id),
+        )
+    conn.commit()
+
+def soft_delete_named_master(conn, table: str, row_id: int) -> bool:
+    if table not in {"departments", "positions", "employment_types"}:
+        raise ValueError("invalid master table")
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE {table} SET is_active=0, updated_at=datetime('now') WHERE id=? AND is_active=1",
+        (row_id,),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+def list_payroll_item_categories(conn, include_inactive: bool = False):
+    where = "" if include_inactive else "WHERE is_active = 1"
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT *
+        FROM payroll_item_categories
+        {where}
+        ORDER BY is_active DESC, display_order ASC, id ASC
+        """
+    )
+    return cur.fetchall()
+
+def upsert_payroll_item_category(conn, code, name, item_kind, display_order=0, is_active=1, memo=None, row_id=None):
+    if row_id is None:
+        conn.execute(
+            """
+            INSERT INTO payroll_item_categories(code, name, item_kind, display_order, is_active, memo)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (code, name, item_kind, display_order, is_active, memo),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE payroll_item_categories
+            SET code=?, name=?, item_kind=?, display_order=?, is_active=?, memo=?, updated_at=datetime('now')
+            WHERE id=?
+            """,
+            (code, name, item_kind, display_order, is_active, memo, row_id),
+        )
+    conn.commit()
+
+def soft_delete_payroll_item_category(conn, row_id: int) -> bool:
+    cur = conn.cursor()
+    cur.execute("UPDATE payroll_item_categories SET is_active=0, updated_at=datetime('now') WHERE id=? AND is_active=1", (row_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+def list_payroll_items(conn, include_inactive: bool = False):
+    where = "" if include_inactive else "WHERE pi.is_active = 1"
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT pi.*, c.name AS category_name, c.code AS category_code
+        FROM payroll_items pi
+        LEFT JOIN payroll_item_categories c ON c.id = pi.category_id
+        {where}
+        ORDER BY pi.is_active DESC, pi.display_order ASC, pi.id ASC
+        """
+    )
+    return cur.fetchall()
+
+def upsert_payroll_item(conn, code, name, item_kind, category_id=None, is_system=0, is_active=1,
+                        is_taxable=0, is_social_insurance_base=0, is_employment_insurance_base=0,
+                        is_commute=0, display_order=0, memo=None, row_id=None):
+    if row_id is None:
+        conn.execute(
+            """
+            INSERT INTO payroll_items(
+              code, name, item_kind, category_id, is_system, is_active, is_taxable,
+              is_social_insurance_base, is_employment_insurance_base, is_commute,
+              display_order, memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (code, name, item_kind, category_id, is_system, is_active, is_taxable,
+             is_social_insurance_base, is_employment_insurance_base, is_commute, display_order, memo),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE payroll_items
+            SET code=?, name=?, item_kind=?, category_id=?, is_system=?, is_active=?, is_taxable=?,
+                is_social_insurance_base=?, is_employment_insurance_base=?, is_commute=?,
+                display_order=?, memo=?, updated_at=datetime('now')
+            WHERE id=?
+            """,
+            (code, name, item_kind, category_id, is_system, is_active, is_taxable,
+             is_social_insurance_base, is_employment_insurance_base, is_commute, display_order, memo, row_id),
+        )
+    conn.commit()
+
+def soft_delete_payroll_item(conn, row_id: int) -> bool:
+    cur = conn.cursor()
+    cur.execute("UPDATE payroll_items SET is_active=0, updated_at=datetime('now') WHERE id=? AND is_active=1", (row_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+def upsert_employee_payroll_item_standard_value(conn, employee_id: int, item_id: int, start_month: str,
+                                                amount: int, is_active: int = 1, memo=None):
+    conn.execute(
+        """
+        INSERT INTO employee_payroll_item_standard_values(
+          employee_id, item_id, start_month, amount, is_active, memo
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(employee_id, item_id, start_month) DO UPDATE SET
+          amount=excluded.amount,
+          is_active=excluded.is_active,
+          memo=excluded.memo,
+          updated_at=datetime('now')
+        """,
+        (employee_id, item_id, start_month, amount, is_active, memo),
+    )
+    conn.commit()
+
+def list_employee_payroll_item_standard_values(conn, employee_id: int):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT v.*, i.code AS item_code, i.name AS item_name, i.item_kind
+        FROM employee_payroll_item_standard_values v
+        JOIN payroll_items i ON i.id = v.item_id
+        WHERE v.employee_id = ?
+        ORDER BY v.is_active DESC, v.start_month DESC, i.display_order ASC
+        """,
+        (employee_id,),
+    )
+    return cur.fetchall()
+
+def upsert_payroll_monthly_item_value(conn, monthly_id: int, employee_id: int, year: int, month: int,
+                                      item_id: int, item_kind: str, amount: int, source: str = "manual",
+                                      is_locked: int = 0, memo=None, commit: bool = True):
+    row = conn.execute(
+        """
+        SELECT is_locked
+        FROM payroll_monthly_item_values
+        WHERE monthly_id = ? AND item_id = ?
+        """,
+        (monthly_id, item_id),
+    ).fetchone()
+    if row and int(row["is_locked"] or 0):
+        return False
+    conn.execute(
+        """
+        INSERT INTO payroll_monthly_item_values(
+          monthly_id, employee_id, year, month, item_id, item_kind, amount, source, is_locked, memo
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(monthly_id, item_id) DO UPDATE SET
+          amount=excluded.amount,
+          source=excluded.source,
+          is_locked=excluded.is_locked,
+          memo=excluded.memo,
+          updated_at=datetime('now')
+        """,
+        (monthly_id, employee_id, year, month, item_id, item_kind, amount, source, is_locked, memo),
+    )
+    if commit:
+        conn.commit()
+    return True
+
+def list_payroll_monthly_item_values(conn, monthly_id: int):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT v.*, i.code AS item_code, i.name AS item_name, i.display_order
+        FROM payroll_monthly_item_values v
+        JOIN payroll_items i ON i.id = v.item_id
+        WHERE v.monthly_id = ?
+        ORDER BY i.display_order ASC, v.id ASC
+        """,
+        (monthly_id,),
+    )
+    return cur.fetchall()
+
+def _employee_context(conn, employee_id: int):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT employee_id, department_id, position_id, employment_type_id
+        FROM employees
+        WHERE employee_id = ?
+        """,
+        (employee_id,),
+    )
+    return cur.fetchone()
+
+def get_applicable_payroll_items(conn, employee_id: int, include_system: bool = False):
+    """
+    Return active payroll items applicable to an employee.
+    System deductions are excluded by default so existing automatic calculation remains authoritative.
+    """
+    emp = _employee_context(conn, employee_id)
+    if not emp:
+        return []
+
+    item_filter = "" if include_system else "AND item_kind != 'system_deduction'"
+    items = conn.execute(
+        f"""
+        SELECT *
+        FROM payroll_items
+        WHERE is_active = 1
+          {item_filter}
+        ORDER BY display_order ASC, id ASC
+        """
+    ).fetchall()
+    assignments = conn.execute(
+        """
+        SELECT *
+        FROM payroll_item_assignments
+        WHERE is_active = 1
+        ORDER BY display_order ASC, id ASC
+        """
+    ).fetchall()
+
+    def matches(a):
+        tt = a["target_type"]
+        if tt == "all":
+            return True
+        if tt == "employee":
+            return a["employee_id"] == employee_id
+        if tt == "department":
+            return emp["department_id"] and a["department_id"] == emp["department_id"]
+        if tt == "position":
+            return emp["position_id"] and a["position_id"] == emp["position_id"]
+        if tt == "employment_type":
+            return emp["employment_type_id"] and a["employment_type_id"] == emp["employment_type_id"]
+        if tt == "department_position":
+            return (
+                emp["department_id"]
+                and emp["position_id"]
+                and a["department_id"] == emp["department_id"]
+                and a["position_id"] == emp["position_id"]
+            )
+        return False
+
+    result = []
+    for item in items:
+        all_item_assignments = [a for a in assignments if a["item_id"] == item["id"]]
+        item_assignments = [a for a in all_item_assignments if matches(a)]
+        if not all_item_assignments:
+            result.append(item)
+            continue
+        employee_exclude = any(a["target_type"] == "employee" and a["action"] == "exclude" for a in item_assignments)
+        if employee_exclude:
+            continue
+        employee_include = any(a["target_type"] == "employee" and a["action"] == "include" for a in item_assignments)
+        group_include = any(a["target_type"] in {"department", "position", "employment_type", "department_position"} and a["action"] == "include" for a in item_assignments)
+        all_include = any(a["target_type"] == "all" and a["action"] == "include" for a in item_assignments)
+        group_exclude = any(a["target_type"] in {"department", "position", "employment_type", "department_position"} and a["action"] == "exclude" for a in item_assignments)
+        if employee_include or (group_include and not group_exclude) or (all_include and not group_exclude):
+            result.append(item)
+    return result
+
+def get_employee_standard_amount(conn, employee_id: int, item_id: int, target_month: str) -> int:
+    row = conn.execute(
+        """
+        SELECT amount
+        FROM employee_payroll_item_standard_values
+        WHERE employee_id = ?
+          AND item_id = ?
+          AND is_active = 1
+          AND start_month <= ?
+        ORDER BY start_month DESC, id DESC
+        LIMIT 1
+        """,
+        (employee_id, item_id, target_month),
+    ).fetchone()
+    return int(row["amount"] or 0) if row else 0
+
+def get_payroll_monthly_item_value_map(conn, monthly_id: int):
+    rows = list_payroll_monthly_item_values(conn, monthly_id)
+    return {int(r["item_id"]): r for r in rows}
+
+def _empty_dynamic_payroll_totals() -> dict:
+    return {
+        "has_dynamic_items": False,
+        "total_pay": 0,
+        "taxable_pay": 0,
+        "social_insurance_base": 0,
+        "employment_insurance_base": 0,
+        "commute_pay": 0,
+        "non_taxable_pay": 0,
+        "total_custom_deduction": 0,
+        "item_details": [],
+    }
+
+def calculate_dynamic_payroll_item_totals(
+    conn,
+    monthly_id: int,
+    employee_id: int | None = None,
+    year: int | None = None,
+    month: int | None = None,
+) -> dict:
+    """
+    Aggregate monthly detail rows for the phased dynamic payroll-item migration.
+
+    System deductions are intentionally excluded from total_custom_deduction so
+    existing social insurance, employment insurance, withholding tax, and
+    resident tax handling stays authoritative.
+    """
+    totals = _empty_dynamic_payroll_totals()
+    params = [monthly_id]
+    where = ["v.monthly_id = ?"]
+    if employee_id is not None:
+        where.append("v.employee_id = ?")
+        params.append(employee_id)
+    if year is not None:
+        where.append("v.year = ?")
+        params.append(year)
+    if month is not None:
+        where.append("v.month = ?")
+        params.append(month)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+          v.id AS value_id,
+          v.monthly_id,
+          v.employee_id,
+          v.year,
+          v.month,
+          v.item_id,
+          COALESCE(v.item_kind, i.item_kind) AS effective_item_kind,
+          v.amount,
+          v.source,
+          v.is_locked,
+          i.code AS item_code,
+          i.name AS item_name,
+          i.item_kind AS master_item_kind,
+          i.is_active,
+          i.is_taxable,
+          i.is_social_insurance_base,
+          i.is_employment_insurance_base,
+          i.is_commute,
+          i.display_order
+        FROM payroll_monthly_item_values v
+        LEFT JOIN payroll_items i ON i.id = v.item_id
+        WHERE {" AND ".join(where)}
+        ORDER BY COALESCE(i.display_order, 999999), v.id
+        """,
+        tuple(params),
+    ).fetchall()
+
+    totals["has_dynamic_items"] = bool(rows)
+    for row in rows:
+        amount = int(row_get(row, "amount", 0) or 0)
+        item_kind = row_get(row, "effective_item_kind", "") or ""
+        detail = {
+            "value_id": row_get(row, "value_id"),
+            "item_id": row_get(row, "item_id"),
+            "code": row_get(row, "item_code"),
+            "name": row_get(row, "item_name"),
+            "item_kind": item_kind,
+            "amount": amount,
+            "source": row_get(row, "source"),
+            "is_locked": int(row_get(row, "is_locked", 0) or 0),
+        }
+        totals["item_details"].append(detail)
+
+        if item_kind == "pay":
+            totals["total_pay"] += amount
+            if int(row_get(row, "is_taxable", 0) or 0):
+                totals["taxable_pay"] += amount
+            else:
+                totals["non_taxable_pay"] += amount
+            if int(row_get(row, "is_social_insurance_base", 0) or 0):
+                totals["social_insurance_base"] += amount
+            if int(row_get(row, "is_employment_insurance_base", 0) or 0):
+                totals["employment_insurance_base"] += amount
+            if int(row_get(row, "is_commute", 0) or 0):
+                totals["commute_pay"] += amount
+        elif item_kind == "deduction":
+            totals["total_custom_deduction"] += amount
+
+    return totals
+
+def has_dynamic_item_values(
+    conn,
+    monthly_id: int,
+    employee_id: int | None = None,
+    year: int | None = None,
+    month: int | None = None,
+) -> bool:
+    where = ["monthly_id = ?"]
+    params = [monthly_id]
+    if employee_id is not None:
+        where.append("employee_id = ?")
+        params.append(employee_id)
+    if year is not None:
+        where.append("year = ?")
+        params.append(year)
+    if month is not None:
+        where.append("month = ?")
+        params.append(month)
+    row = conn.execute(
+        f"SELECT 1 FROM payroll_monthly_item_values WHERE {' AND '.join(where)} LIMIT 1",
+        tuple(params),
+    ).fetchone()
+    return row is not None
+
+def has_dynamic_payroll_items(conn, monthly_id: int) -> bool:
+    return has_dynamic_item_values(conn, monthly_id)
+
+def get_dynamic_totals_for_payroll_row(conn, r) -> dict:
+    target_month = row_get(r, "target_month", "") or ""
+    year = month = None
+    if len(target_month) == 7 and "-" in target_month:
+        try:
+            year, month = (int(x) for x in target_month.split("-", 1))
+        except Exception:
+            year = month = None
+    return calculate_dynamic_payroll_item_totals(
+        conn,
+        int(row_get(r, "payroll_id", 0) or 0),
+        int(row_get(r, "employee_id", 0) or 0) or None,
+        year,
+        month,
+    )
+
+def get_fixed_payroll_row_totals(r) -> dict:
+    total_pay = (
+        int(row_get(r, "officer_pay", 0) or 0)
+        + int(row_get(r, "base_salary", 0) or 0)
+        + int(row_get(r, "deemed_ot", 0) or 0)
+        + int(row_get(r, "overtime_pay", 0) or 0)
+        + int(row_get(r, "special_allow", 0) or 0)
+        + int(row_get(r, "commute_nontax", 0) or 0)
+    )
+    taxable_pay = (
+        int(row_get(r, "officer_pay", 0) or 0)
+        + int(row_get(r, "base_salary", 0) or 0)
+        + int(row_get(r, "deemed_ot", 0) or 0)
+        + int(row_get(r, "overtime_pay", 0) or 0)
+        + int(row_get(r, "special_allow", 0) or 0)
+    )
+    non_taxable_pay = int(row_get(r, "commute_nontax", 0) or 0)
+    employment_insurance_base = taxable_pay
+    social_insurance_base = total_pay
+    total_custom_deduction = int(row_get(r, "travel_saving", 0) or 0)
+
+    for i in range(1, 6):
+        pay_amount = int(row_get(r, f"pay_free{i}", 0) or 0)
+        total_pay += pay_amount
+        if int(row_get(r, f"pay_free{i}_is_taxable", 1) or 1):
+            taxable_pay += pay_amount
+        else:
+            non_taxable_pay += pay_amount
+        if int(row_get(r, f"pay_free{i}_is_social_base", 0) or 0):
+            social_insurance_base += pay_amount
+        if int(row_get(r, f"pay_free{i}_is_employment_base", 0) or 0):
+            employment_insurance_base += pay_amount
+        total_custom_deduction += int(row_get(r, f"deduct_free{i}", 0) or 0)
+
+    return {
+        "has_dynamic_items": False,
+        "total_pay": max(0, total_pay),
+        "taxable_pay": max(0, taxable_pay),
+        "social_insurance_base": max(0, social_insurance_base),
+        "employment_insurance_base": max(0, employment_insurance_base),
+        "commute_pay": int(row_get(r, "commute_nontax", 0) or 0),
+        "non_taxable_pay": max(0, non_taxable_pay),
+        "total_custom_deduction": max(0, total_custom_deduction),
+        "item_details": [],
+    }
+
+def get_effective_payroll_row_totals(conn, r) -> dict:
+    if USE_DYNAMIC_ITEMS_FOR_TOTALS:
+        dynamic = get_dynamic_totals_for_payroll_row(conn, r)
+        if dynamic["has_dynamic_items"]:
+            return dynamic
+    return get_fixed_payroll_row_totals(r)
+
+def _system_deduction_total_from_row(r) -> int:
+    social = int(row_get(r, "social_ins_total_calc", 0) or 0)
+    emp = int(row_get(r, "emp_ins_employee", 0) or 0)
+    withholding = int(row_get(r, "withholding_tax_applied", 0) or 0)
+    resident = int(row_get(r, "resident_tax_applied", 0) or 0)
+    return max(0, social + emp + withholding + resident)
+
+def build_payroll_calculation_basis(conn, r) -> dict:
+    """
+    Unified payroll calculation basis.
+
+    Dynamic item rows take over pay/custom-deduction totals when at least one
+    row exists, even when every amount is zero. System deductions continue to
+    use the existing saved values.
+    """
+    dynamic = get_dynamic_totals_for_payroll_row(conn, r)
+    fixed = get_fixed_payroll_row_totals(r)
+    use_dynamic = bool(dynamic["has_dynamic_items"] and USE_DYNAMIC_ITEMS_FOR_TOTALS)
+    source = dynamic if use_dynamic else fixed
+
+    system_deduction_total = _system_deduction_total_from_row(r)
+    total_pay = int(source["total_pay"] or 0)
+    custom_deduction_total = int(source["total_custom_deduction"] or 0)
+    total_deduction = system_deduction_total + custom_deduction_total
+    net_pay = total_pay - total_deduction
+
+    return {
+        "use_dynamic_items": use_dynamic,
+        "total_pay": total_pay,
+        "taxable_pay": int(source["taxable_pay"] or 0),
+        "non_taxable_pay": int(source["non_taxable_pay"] or 0),
+        "commute_pay": int(source["commute_pay"] or 0),
+        "employment_insurance_base": int(source["employment_insurance_base"] or 0),
+        "social_insurance_base": int(source["social_insurance_base"] or 0),
+        "custom_deduction_total": custom_deduction_total,
+        "system_deduction_total": system_deduction_total,
+        "health_insurance": int(row_get(r, "health_ins_employee", 0) or 0),
+        "nursing_care_insurance": int(row_get(r, "care_ins_employee", 0) or 0),
+        "pension_insurance": int(row_get(r, "pension_ins_employee", 0) or 0),
+        "child_care_contribution": int(row_get(r, "childcare_support_employee", 0) or 0),
+        "employment_insurance": int(row_get(r, "emp_ins_employee", 0) or 0),
+        "income_tax": int(row_get(r, "withholding_tax_applied", 0) or 0),
+        "resident_tax": int(row_get(r, "resident_tax_applied", 0) or 0),
+        "total_deduction": total_deduction,
+        "net_pay": net_pay,
+        "item_details": source.get("item_details", []),
+    }
+
+def _row_with_calculation_basis(conn, r) -> dict:
+    row = dict(r)
+    basis = build_payroll_calculation_basis(conn, r)
+    row["use_dynamic_items"] = 1 if basis["use_dynamic_items"] else 0
+    row["dynamic_social_insurance_base"] = basis["social_insurance_base"]
+    row["total_pay_input"] = basis["total_pay"]
+    row["total_deduct_input"] = basis["custom_deduction_total"]
+    row["net_pay_input"] = basis["total_pay"] - basis["custom_deduction_total"]
+    row["taxable_pay"] = basis["taxable_pay"]
+    row["non_taxable_pay"] = basis["non_taxable_pay"]
+    row["employment_insurance_base_calc"] = basis["employment_insurance_base"]
+    row["system_deduction_total"] = basis["system_deduction_total"]
+    row["total_deduction_calc"] = basis["total_deduction"]
+    row["net_pay_calc"] = basis["net_pay"]
+    return row
+
+def _aggregate_payroll_basis_rows(rows, conn):
+    grouped = {}
+    for r in rows:
+        key = (r["target_month"], r["pay_date_applied"])
+        b = build_payroll_calculation_basis(conn, r)
+        if key not in grouped:
+            grouped[key] = {
+                "target_month": r["target_month"],
+                "pay_date_applied": r["pay_date_applied"],
+                "employee_count": 0,
+                "taxable_pay_sum": 0,
+                "non_taxable_pay_sum": 0,
+                "gross_pay_sum": 0,
+                "social_ins_sum": 0,
+                "withholding_tax_sum": 0,
+                "resident_tax_sum": 0,
+                "other_deduct_sum": 0,
+                "total_deduct_sum": 0,
+                "net_pay_sum": 0,
+                "dynamic_employee_count": 0,
+            }
+        g = grouped[key]
+        g["employee_count"] += 1
+        g["taxable_pay_sum"] += b["taxable_pay"]
+        g["non_taxable_pay_sum"] += b["non_taxable_pay"]
+        g["gross_pay_sum"] += b["total_pay"]
+        g["social_ins_sum"] += int(row_get(r, "social_ins_total_calc", 0) or 0)
+        g["withholding_tax_sum"] += b["income_tax"]
+        g["resident_tax_sum"] += b["resident_tax"]
+        g["other_deduct_sum"] += b["custom_deduction_total"]
+        g["total_deduct_sum"] += b["total_deduction"]
+        g["net_pay_sum"] += b["net_pay"]
+        if b["use_dynamic_items"]:
+            g["dynamic_employee_count"] += 1
+    return [grouped[k] for k in sorted(grouped.keys(), key=lambda x: (x[1] or "", x[0] or ""))]
 
 def _normalize_employee_csv_date(value: str | None) -> str | None:
     s = (value or "").strip()
@@ -560,7 +1340,7 @@ def get_payroll_rows(conn, target_month: str):
         """,
         (target_month,),
     )
-    return cur.fetchall()
+    return [_row_with_calculation_basis(conn, r) for r in cur.fetchall()]
 
 def get_payroll_batch_rows(conn, target_month: str):
     """
@@ -630,6 +1410,16 @@ def get_payroll_batch_rows(conn, target_month: str):
 # 年別一覧（対象年月基準）
 # ==============================
 def get_payroll_batch_rows_by_target_year(conn, year: int):
+    rows = []
+    for r in conn.execute(
+        "SELECT DISTINCT target_month FROM payroll_monthly WHERE substr(target_month,1,4)=? ORDER BY target_month",
+        (str(year),),
+    ).fetchall():
+        rows.extend(get_payroll_rows(conn, r["target_month"]))
+    return _aggregate_payroll_basis_rows(rows, conn)
+
+    return _aggregate_payroll_basis_rows(get_payroll_rows(conn, target_month), conn)
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -731,6 +1521,18 @@ def get_payroll_batch_rows_by_target_year(conn, year: int):
 # 年別一覧（支給日基準）
 # ==============================
 def get_payroll_batch_rows_by_paydate_year(conn, year: int):
+    rows = []
+    target_months = conn.execute(
+        "SELECT DISTINCT target_month FROM payroll_monthly WHERE substr(pay_date_applied,1,4)=? ORDER BY target_month",
+        (str(year),),
+    ).fetchall()
+    for r in target_months:
+        rows.extend(
+            row for row in get_payroll_rows(conn, r["target_month"])
+            if str(row_get(row, "pay_date_applied", "") or "").startswith(str(year))
+        )
+    return _aggregate_payroll_basis_rows(rows, conn)
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -871,7 +1673,7 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
         """,
         (target_month, pay_date_applied),
     )
-    return cur.fetchall()
+    return [_row_with_calculation_basis(conn, r) for r in cur.fetchall()]
 
 def copy_prev_month_inputs(conn, target_month: str, prev_month: str):
     """
@@ -1045,6 +1847,13 @@ def ensure_schema_migrations(conn):
 
     if not _column_exists(conn, "employees", "memo"):
         conn.execute("ALTER TABLE employees ADD COLUMN memo TEXT")
+
+    if not _column_exists(conn, "employees", "department_id"):
+        conn.execute("ALTER TABLE employees ADD COLUMN department_id INTEGER")
+    if not _column_exists(conn, "employees", "position_id"):
+        conn.execute("ALTER TABLE employees ADD COLUMN position_id INTEGER")
+    if not _column_exists(conn, "employees", "employment_type_id"):
+        conn.execute("ALTER TABLE employees ADD COLUMN employment_type_id INTEGER")
 
     conn.execute(
         """
@@ -1269,9 +2078,151 @@ def ensure_schema_migrations(conn):
         """
     )
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_settings (
+          id            INTEGER PRIMARY KEY CHECK (id = 1),
+          company_name  TEXT NOT NULL DEFAULT '',
+          company_kana  TEXT NOT NULL DEFAULT '',
+          postal_code   TEXT NOT NULL DEFAULT '',
+          address       TEXT NOT NULL DEFAULT '',
+          phone         TEXT NOT NULL DEFAULT '',
+          memo          TEXT,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    for table_sql in [
+        """
+        CREATE TABLE IF NOT EXISTS departments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS positions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS employment_types (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS payroll_item_categories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          code TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          item_kind TEXT NOT NULL,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS payroll_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          code TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          item_kind TEXT NOT NULL,
+          category_id INTEGER,
+          is_system INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          is_taxable INTEGER NOT NULL DEFAULT 0,
+          is_social_insurance_base INTEGER NOT NULL DEFAULT 0,
+          is_employment_insurance_base INTEGER NOT NULL DEFAULT 0,
+          is_commute INTEGER NOT NULL DEFAULT 0,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(category_id) REFERENCES payroll_item_categories(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS payroll_item_assignments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          item_id INTEGER NOT NULL,
+          target_type TEXT NOT NULL DEFAULT 'all',
+          department_id INTEGER,
+          position_id INTEGER,
+          employment_type_id INTEGER,
+          employee_id INTEGER,
+          action TEXT NOT NULL DEFAULT 'include',
+          is_active INTEGER NOT NULL DEFAULT 1,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(item_id) REFERENCES payroll_items(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS employee_payroll_item_standard_values (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id INTEGER NOT NULL,
+          item_id INTEGER NOT NULL,
+          start_month TEXT NOT NULL,
+          amount INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(employee_id, item_id, start_month),
+          FOREIGN KEY(employee_id) REFERENCES employees(employee_id),
+          FOREIGN KEY(item_id) REFERENCES payroll_items(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS payroll_monthly_item_values (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          monthly_id INTEGER NOT NULL,
+          employee_id INTEGER NOT NULL,
+          year INTEGER NOT NULL,
+          month INTEGER NOT NULL,
+          item_id INTEGER NOT NULL,
+          item_kind TEXT NOT NULL,
+          amount INTEGER NOT NULL DEFAULT 0,
+          source TEXT NOT NULL DEFAULT 'manual',
+          is_locked INTEGER NOT NULL DEFAULT 0,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(monthly_id, item_id),
+          FOREIGN KEY(monthly_id) REFERENCES payroll_monthly(payroll_id),
+          FOREIGN KEY(employee_id) REFERENCES employees(employee_id),
+          FOREIGN KEY(item_id) REFERENCES payroll_items(id)
+        )
+        """,
+    ]:
+        conn.execute(table_sql)
+
     conn.commit()
 
     seed_social_insurance_item_master(conn)
+    seed_phase1_masters(conn)
 
 
 def _get_db_dir(conn) -> Path:
@@ -1563,8 +2514,13 @@ def load_withholding_table(conn, year: int = WITHHOLDING_YEAR_DEFAULT) -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def _calc_taxable_pay_from_payroll_row(r) -> int:
+def _calc_taxable_pay_from_payroll_row(r, conn=None) -> int:
     """課税支給額（簡易）"""
+    if conn is not None and USE_DYNAMIC_ITEMS_FOR_TAXABLE_PAY:
+        dynamic = get_dynamic_totals_for_payroll_row(conn, r)
+        if dynamic["has_dynamic_items"]:
+            return max(0, int(dynamic["taxable_pay"] or 0))
+
     base = 0
     base += int(r["officer_pay"])
     base += int(r["base_salary"])
@@ -1626,7 +2582,7 @@ def apply_withholding_tax_auto(conn, target_month: str, year: int = WITHHOLDING_
     cur = conn.cursor()
 
     for r in rows:
-        taxable_pay = _calc_taxable_pay_from_payroll_row(r)
+        taxable_pay = _calc_taxable_pay_from_payroll_row(r, conn)
         social = int(row_get(r, "social_ins_total_calc", 0) or 0)
         taxable_after = taxable_pay - social
 
@@ -1841,12 +2797,17 @@ def get_emp_ins_rate_for_month(conn, target_month: str):
         return (0.0, 0.0)
     return (float(row["employee_rate"]), float(row["employer_rate"]))
 
-def _calc_emp_ins_base_from_payroll_row(r) -> int:
+def _calc_emp_ins_base_from_payroll_row(r, conn=None) -> int:
     """
     雇用保険の基礎賃金（まずは入力値ベースで簡易に）
     - 非課税交通費は除外
     - 自由支給は is_employment_base=1 のもののみ加算
     """
+    if conn is not None and USE_DYNAMIC_ITEMS_FOR_EMPLOYMENT_INSURANCE:
+        dynamic = get_dynamic_totals_for_payroll_row(conn, r)
+        if dynamic["has_dynamic_items"]:
+            return max(0, int(dynamic["employment_insurance_base"] or 0))
+
     base = 0
 
     # 固定支給（非課税交通費 제외）
@@ -1894,7 +2855,7 @@ def apply_employment_insurance_auto(conn, target_month: str):
         )
 
         if applicable:
-            base = _calc_emp_ins_base_from_payroll_row(r)
+            base = _calc_emp_ins_base_from_payroll_row(r, conn)
             emp_amt = int(math.floor(base * emp_rate))
             er_amt = int(math.floor(base * er_rate))
         else:
@@ -1970,6 +2931,8 @@ def upsert_social_ins_rate(
     conn.commit()
 
 def list_social_ins_rates(conn):
+    return _aggregate_payroll_basis_rows(get_payroll_rows(conn, target_month), conn)
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -3045,7 +4008,7 @@ def apply_bonus_withholding_tax_auto(conn, target_month: str, year: int = WITHHO
         if prev is None:
             prev_after_social = 0
         else:
-            prev_taxable = _calc_taxable_pay_from_payroll_row(prev)
+            prev_taxable = _calc_taxable_pay_from_payroll_row(prev, conn)
             prev_social = int(row_get(prev, "social_ins_total_calc", 0) or 0)
             prev_after_social = max(0, prev_taxable - prev_social)
 
