@@ -8,7 +8,7 @@ import db
 from ui_payroll import PayrollFrame
 from ui_bonus import BonusFrame
 from ui_settings import SettingsFrame
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 def resource_path(relative_name: str) -> Path:
     """
@@ -55,6 +55,7 @@ class DataFileChoiceDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Escape>", lambda e: self._cancel())
+        enable_enter_key_navigation(self)
         center_window(self, parent)
         self.after(10, self.focus_force)
 
@@ -78,7 +79,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1100x650")
+        self.geometry(app_settings.get_window_geometry("main"))
 
         self.conn = None
 
@@ -129,7 +130,7 @@ class App(tk.Tk):
                 ],
                 parent=self,
             )
-            return Path(path) if path else None
+            return Path(path) if path else self._select_db_path()
 
         if dlg.result == "new":
             path = filedialog.asksaveasfilename(
@@ -144,7 +145,7 @@ class App(tk.Tk):
                 ],
                 parent=self,
             )
-            return Path(path) if path else None
+            return Path(path) if path else self._select_db_path()
 
         return None
 

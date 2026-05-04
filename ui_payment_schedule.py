@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 CLOSING_MODE_MAP = {
     "same_month": "当月",
@@ -68,6 +68,7 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
 
         self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
+        enable_enter_key_navigation(self)
         center_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
@@ -187,6 +188,7 @@ class PaymentScheduleFrame(ttk.Frame):
         ttk.Button(bottom, text="閉じる", command=self.close_window).pack(side="right", padx=5)
 
         self.refresh()
+        enable_enter_key_navigation(self)
 
     def refresh(self):
         import db

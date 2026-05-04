@@ -1,3 +1,7 @@
+import tkinter as tk
+from tkinter import ttk
+
+
 def center_window(window, parent=None):
     """Place a Tk/Toplevel window at the center of its parent or screen."""
     window.update_idletasks()
@@ -29,3 +33,61 @@ def center_window(window, parent=None):
     x = parent_x + max((parent_w - width) // 2, 0)
     y = parent_y + max((parent_h - height) // 2, 0)
     window.geometry(f"{width}x{height}+{x}+{y}")
+
+
+def enable_enter_key_navigation(root_or_frame):
+    """Enable Enter-to-next-field and Enter-to-invoke-button under a widget tree."""
+
+    entry_classes = [tk.Entry, tk.Spinbox, ttk.Entry]
+    if hasattr(ttk, "Spinbox"):
+        entry_classes.append(ttk.Spinbox)
+    entry_classes = tuple(entry_classes)
+    button_classes = (tk.Button, ttk.Button)
+
+    def has_own_return_binding(widget) -> bool:
+        try:
+            return bool(widget.bind("<Return>"))
+        except tk.TclError:
+            return True
+
+    def focus_next(widget):
+        next_widget = widget.tk_focusNext()
+        if next_widget:
+            next_widget.focus_set()
+
+    def bind_widget(widget):
+        if isinstance(widget, tk.Text):
+            return
+
+        if isinstance(widget, ttk.Combobox):
+            try:
+                widget.configure(takefocus=True)
+            except tk.TclError:
+                pass
+            if not has_own_return_binding(widget):
+                widget.bind("<Return>", lambda event: event.widget.after_idle(lambda w=event.widget: focus_next(w)))
+            return
+
+        if isinstance(widget, entry_classes):
+            try:
+                widget.configure(takefocus=True)
+            except tk.TclError:
+                pass
+            if not has_own_return_binding(widget):
+                widget.bind("<Return>", lambda event: (focus_next(event.widget), "break")[1])
+            return
+
+        if isinstance(widget, button_classes):
+            try:
+                widget.configure(takefocus=True)
+            except tk.TclError:
+                pass
+            if not has_own_return_binding(widget):
+                widget.bind("<Return>", lambda event: (event.widget.invoke(), "break")[1])
+
+    def walk(widget):
+        bind_widget(widget)
+        for child in widget.winfo_children():
+            walk(child)
+
+    walk(root_or_frame)

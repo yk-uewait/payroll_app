@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import db
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 
 ITEM_KIND_LABELS = {
@@ -53,6 +53,7 @@ class CompanySettingsDialog(tk.Toplevel):
 
         self.load()
         self.bind("<Escape>", lambda e: self.close())
+        enable_enter_key_navigation(self)
         center_window(self, parent)
 
     def load(self):
@@ -124,6 +125,7 @@ class NamedMasterEditorDialog(tk.Toplevel):
             self.var_order.set(str(row["display_order"] or 0))
             self.var_active.set(int(row["is_active"] or 0))
             self.var_memo.set(row["memo"] or "")
+        enable_enter_key_navigation(self)
         center_window(self, parent)
 
     def save(self):
@@ -183,6 +185,7 @@ class NamedMasterFrame(ttk.Frame):
         ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="閉じる", command=self.close_window).pack(side="right", padx=5)
         self.refresh()
+        enable_enter_key_navigation(self)
 
     def refresh(self):
         for item in self.tree.get_children():
@@ -262,6 +265,7 @@ class PayrollCategoryEditorDialog(tk.Toplevel):
             self.var_order.set(str(row["display_order"] or 0))
             self.var_active.set(int(row["is_active"] or 0))
             self.var_memo.set(row["memo"] or "")
+        enable_enter_key_navigation(self)
         center_window(self, parent)
 
     def save(self):
@@ -295,6 +299,7 @@ class PayrollCategoryFrame(ttk.Frame):
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self._buttons()
         self.refresh()
+        enable_enter_key_navigation(self)
 
     def _buttons(self):
         btns = ttk.Frame(self)
@@ -385,6 +390,7 @@ class PayrollItemEditorDialog(tk.Toplevel):
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
         if row:
             self.load_row(row)
+        enable_enter_key_navigation(self)
         center_window(self, parent)
 
     def load_categories(self):
@@ -459,6 +465,7 @@ class PayrollItemFrame(ttk.Frame):
         ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
         self.refresh()
+        enable_enter_key_navigation(self)
 
     def refresh(self):
         for item in self.tree.get_children():
@@ -527,6 +534,7 @@ class EmployeeStandardValueDialog(tk.Toplevel):
         btns.grid(row=6, column=0, columnspan=2, padx=5, pady=(10, 0), sticky="e")
         ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
+        enable_enter_key_navigation(self)
         center_window(self, parent)
 
     def _selected_id(self, var, options):
@@ -593,6 +601,7 @@ class EmployeeStandardValueFrame(ttk.Frame):
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
         self.refresh()
+        enable_enter_key_navigation(self)
 
     def refresh(self):
         for item in self.tree.get_children():

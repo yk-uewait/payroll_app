@@ -2,8 +2,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
 import db
+import app_settings
 from payroll_editor import PayrollEditorDialog
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
+from utils_dates import compute_pay_date, parse_month
 
 
 class PayrollBatchDialog(tk.Toplevel):
@@ -19,12 +21,14 @@ class PayrollBatchDialog(tk.Toplevel):
         self.selected_employee_index = None
         self.employee_header_labels = []
         self.employee_value_widgets = []
+        self.output_data_by_payroll_id = {}
 
         self.title(f"月次給与明細 {target_month} / 支払日 {pay_date_applied}")
-        self.geometry("1500x760")
+        self.geometry(app_settings.get_window_geometry("payroll_batch"))
         self.resizable(True, True)
         self.transient(master)
         self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self._close)
 
         hdr = ttk.LabelFrame(self, text="対象")
         hdr.pack(fill="x", padx=10, pady=10)
@@ -35,40 +39,120 @@ class PayrollBatchDialog(tk.Toplevel):
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btns, text="再読み込み", command=self.refresh).pack(side="left", padx=5)
-        ttk.Button(btns, text="選択社員を編集（支給・控除）", command=self.edit_selected).pack(side="right", padx=5)
-        ttk.Button(btns, text="支払日を上書き/解除", command=self.override_paydate).pack(side="right", padx=5)
-        ttk.Button(btns, text="閉じる", command=self.destroy).pack(side="right", padx=5)
+        ttk.Button(btns, text="選択社員の編集", command=self.edit_selected).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="未計算社員を追加", command=self.add_missing_employees).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="閉じる", command=self._close).pack(side="right")
 
         self.refresh()
+        enable_enter_key_navigation(self)
         center_window(self, master)
 
     def _build_matrix_area(self):
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=10, pady=10)
 
+        self.header_canvas = tk.Canvas(body, highlightthickness=0, height=44)
         self.canvas = tk.Canvas(body, highlightthickness=0)
         self.v_scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
-        self.h_scroll = ttk.Scrollbar(body, orient="horizontal", command=self.canvas.xview)
-        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+        self.h_scroll = ttk.Scrollbar(body, orient="horizontal", command=self._xview)
+        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self._on_xscroll)
 
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.v_scroll.grid(row=0, column=1, sticky="ns")
-        self.h_scroll.grid(row=1, column=0, sticky="ew")
-        body.grid_rowconfigure(0, weight=1)
+        self.header_canvas.grid(row=0, column=0, sticky="ew")
+        ttk.Frame(body, width=16).grid(row=0, column=1, sticky="ns")
+        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.v_scroll.grid(row=1, column=1, sticky="ns")
+        self.h_scroll.grid(row=2, column=0, sticky="ew")
+        body.grid_rowconfigure(1, weight=1)
         body.grid_columnconfigure(0, weight=1)
 
+        self.header_frame = ttk.Frame(self.header_canvas)
+        self.header_window = self.header_canvas.create_window((0, 0), window=self.header_frame, anchor="nw")
         self.matrix_frame = ttk.Frame(self.canvas)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.matrix_frame, anchor="nw")
 
+        self.header_frame.bind("<Configure>", self._on_header_configure)
+        self.header_canvas.bind("<Configure>", self._on_header_canvas_configure)
         self.matrix_frame.bind("<Configure>", self._on_matrix_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.header_canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.header_canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self.header_canvas.bind("<Button-4>", self._on_mousewheel)
+        self.header_canvas.bind("<Button-5>", self._on_mousewheel)
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
+        self.matrix_frame.bind("<MouseWheel>", self._on_mousewheel)
+        self.matrix_frame.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self.matrix_frame.bind("<Button-4>", self._on_mousewheel)
+        self.matrix_frame.bind("<Button-5>", self._on_mousewheel)
 
     def _on_matrix_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
+    def _on_header_configure(self, event=None):
+        self.header_canvas.configure(scrollregion=self.header_canvas.bbox("all"))
+        self._resize_header_canvas()
+
+    def _on_header_canvas_configure(self, event):
+        self._resize_header_canvas(event.width)
+
+    def _resize_header_canvas(self, canvas_width=None):
+        canvas_width = canvas_width or self.header_canvas.winfo_width()
+        req_width = self.header_frame.winfo_reqwidth()
+        req_height = max(self.header_frame.winfo_reqheight(), 1)
+        self.header_canvas.itemconfigure(
+            self.header_window,
+            width=max(canvas_width, req_width),
+            height=req_height,
+        )
+        self.header_canvas.configure(height=req_height)
+        self.header_canvas.configure(scrollregion=self.header_canvas.bbox("all"))
+
     def _on_canvas_configure(self, event):
-        self.canvas.itemconfigure(self.canvas_window, height=max(event.height, 1))
+        self._resize_canvas_window(event.width, event.height)
+
+    def _xview(self, *args):
+        self.canvas.xview(*args)
+        self.header_canvas.xview(*args)
+
+    def _on_xscroll(self, first, last):
+        self.h_scroll.set(first, last)
+        self.header_canvas.xview_moveto(first)
+
+    def _resize_canvas_window(self, canvas_width=None, canvas_height=None):
+        canvas_width = canvas_width or self.canvas.winfo_width()
+        canvas_height = canvas_height or self.canvas.winfo_height()
+        self.canvas.itemconfigure(
+            self.canvas_window,
+            width=max(canvas_width, self.matrix_frame.winfo_reqwidth()),
+            height=max(canvas_height, self.matrix_frame.winfo_reqheight()),
+        )
+        self._on_matrix_configure()
+
+    def _on_mousewheel(self, event):
+        if getattr(event, "num", None) == 4:
+            self.canvas.yview_scroll(-3, "units")
+        elif getattr(event, "num", None) == 5:
+            self.canvas.yview_scroll(3, "units")
+        else:
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
+    def _on_shift_mousewheel(self, event):
+        move = int(-10 * (event.delta / 120))
+        self.canvas.xview_scroll(move, "units")
+        self.header_canvas.xview_scroll(move, "units")
+        return "break"
+
+    def _close(self):
+        self.destroy()
+
+    def _bind_scroll_events(self, widget):
+        widget.bind("<MouseWheel>", self._on_mousewheel)
+        widget.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        widget.bind("<Button-4>", self._on_mousewheel)
+        widget.bind("<Button-5>", self._on_mousewheel)
 
     def refresh(self):
         def fmt_yen(v):
@@ -81,6 +165,13 @@ class PayrollBatchDialog(tk.Toplevel):
 
         rows = db.get_payroll_rows_by_pay_date(self.conn, self.target_month, self.pay_date_applied)
         self.rows_data = list(rows)
+        self.output_data_by_payroll_id = {}
+        for row in self.rows_data:
+            payroll_id = int(row["payroll_id"])
+            try:
+                self.output_data_by_payroll_id[payroll_id] = db.build_payroll_output_data(self.conn, row)
+            except Exception:
+                self.output_data_by_payroll_id[payroll_id] = {}
 
         if self.selected_employee_index is not None and self.selected_employee_index >= len(self.rows_data):
             self.selected_employee_index = None
@@ -90,41 +181,35 @@ class PayrollBatchDialog(tk.Toplevel):
         self._render_matrix(fmt_yen)
 
     def _render_matrix(self, fmt_yen):
+        for child in self.header_frame.winfo_children():
+            child.destroy()
         for child in self.matrix_frame.winfo_children():
             child.destroy()
 
         item_defs = [
-            ("payroll_id", "PID", False),
-            ("employee_code", "社員番号", False),
-            ("name_kanji", "氏名", False),
-            ("department", "部署", False),
-            ("pay_date_auto", "支払日(自動)", False),
-            ("pay_date_override", "支払日(上書き)", False),
-            ("pay_date_applied", "支払日(適用)", False),
-            ("emp_ins_base", "雇保基礎", True),
-            ("emp_ins_employee", "雇保(従業員)", True),
-            ("health_care_display", "健保+介護", True),
-            ("childcare_support_employee", "子ども子育て", True),
-            ("pension_ins_employee", "厚年(従業員)", True),
-            ("social_ins_total_calc", "社保合計", True),
-            ("resident_tax_auto", "住民税(自動)", True),
-            ("resident_tax_override", "住民税(上書き)", True),
-            ("resident_tax_applied", "住民税(適用)", True),
-            ("withholding_tax_auto", "所得税(自動)", True),
-            ("withholding_tax_override", "所得税(上書き)", True),
-            ("withholding_tax_applied", "所得税(適用)", True),
-            ("total_pay_input", "総支給(入力)", True),
-            ("total_deduct_input", "控除合計(入力)", True),
-            ("net_pay_input", "手取り(入力)", True),
+            ("field", "department", "部署", False),
+            *self._build_pay_item_defs(),
+            ("output", "total_pay", "総支給金額", True),
+            ("field", "emp_ins_employee", "雇用保険料", True),
+            ("field", "health_care_display", "健康保険料", True),
+            ("field", "childcare_support_employee", "子ども・子育て支援金", True),
+            ("field", "pension_ins_employee", "厚生年金保険料", True),
+            ("field", "social_ins_total_calc", "社会保険料合計", True),
+            ("field", "resident_tax_applied", "住民税", True),
+            ("field", "withholding_tax_applied", "所得税", True),
+            ("output", "total_deduction", "控除合計額", True),
+            ("output", "net_pay", "振込金額", True),
         ]
 
-        ttk.Label(
-            self.matrix_frame,
+        corner_lbl = ttk.Label(
+            self.header_frame,
             text="項目",
             anchor="center",
             relief="solid",
             padding=4
-        ).grid(row=0, column=0, sticky="nsew")
+        )
+        corner_lbl.grid(row=0, column=0, sticky="nsew")
+        self._bind_scroll_events(corner_lbl)
 
         self.employee_header_labels = []
         self.employee_value_widgets = []
@@ -132,7 +217,7 @@ class PayrollBatchDialog(tk.Toplevel):
         for col_idx, row in enumerate(self.rows_data, start=1):
             label_text = f'{row["employee_code"]}\n{row["name_kanji"]}'
             lbl = tk.Label(
-                self.matrix_frame,
+                self.header_frame,
                 text=label_text,
                 relief="solid",
                 borderwidth=1,
@@ -144,23 +229,23 @@ class PayrollBatchDialog(tk.Toplevel):
             lbl.grid(row=0, column=col_idx, sticky="nsew")
             lbl.bind("<Button-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx))
             lbl.bind("<Double-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx, open_editor=True))
+            self._bind_scroll_events(lbl)
             self.employee_header_labels.append(lbl)
 
-        for row_idx, (key, title, is_money) in enumerate(item_defs, start=1):
-            ttk.Label(
+        for row_idx, (source, key, title, is_money) in enumerate(item_defs):
+            title_lbl = ttk.Label(
                 self.matrix_frame,
                 text=title,
                 anchor="w",
                 relief="solid",
                 padding=4
-            ).grid(row=row_idx, column=0, sticky="nsew")
+            )
+            title_lbl.grid(row=row_idx, column=0, sticky="nsew")
+            self._bind_scroll_events(title_lbl)
 
             line_widgets = []
             for col_idx, row in enumerate(self.rows_data, start=1):
-                if key == "health_care_display":
-                    value = int(row["health_ins_employee"] or 0) + int(row["care_ins_employee"] or 0)
-                else:
-                    value = row[key] if key in row.keys() else ""
+                value = self._matrix_value(row, source, key)
 
                 if value is None:
                     value = ""
@@ -181,14 +266,55 @@ class PayrollBatchDialog(tk.Toplevel):
                 lbl.grid(row=row_idx, column=col_idx, sticky="nsew")
                 lbl.bind("<Button-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx))
                 lbl.bind("<Double-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx, open_editor=True))
+                self._bind_scroll_events(lbl)
                 line_widgets.append(lbl)
             self.employee_value_widgets.append(line_widgets)
 
         self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=170)
+        self.header_frame.grid_columnconfigure(0, weight=0, minsize=170)
         for col_idx in range(1, len(self.rows_data) + 1):
             self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=130)
+            self.header_frame.grid_columnconfigure(col_idx, weight=0, minsize=130)
 
         self._apply_selection_highlight()
+        self.header_frame.update_idletasks()
+        self.matrix_frame.update_idletasks()
+        self._resize_header_canvas()
+        self._resize_canvas_window()
+
+    def _build_pay_item_defs(self):
+        seen = {}
+        for row in self.rows_data:
+            output = self.output_data_by_payroll_id.get(int(row["payroll_id"]), {})
+            for item in output.get("pay_items", []) or []:
+                item_key = item.get("item_id") or item.get("code") or item.get("name")
+                if item_key not in seen:
+                    seen[item_key] = {
+                        "key": item_key,
+                        "name": item.get("name") or "",
+                        "display_order": int(item.get("display_order") or 0),
+                    }
+        return [
+            ("pay_item", item["key"], item["name"], True)
+            for item in sorted(seen.values(), key=lambda x: (x["display_order"], x["name"]))
+        ]
+
+    def _matrix_value(self, row, source, key):
+        if source == "field":
+            if key == "health_care_display":
+                return int(row["health_ins_employee"] or 0) + int(row["care_ins_employee"] or 0)
+            return row[key] if key in row.keys() else ""
+
+        output = self.output_data_by_payroll_id.get(int(row["payroll_id"]), {})
+        if source == "output":
+            return output.get(key, row[key] if key in row.keys() else "")
+        if source == "pay_item":
+            for item in output.get("pay_items", []) or []:
+                item_key = item.get("item_id") or item.get("code") or item.get("name")
+                if item_key == key:
+                    return item.get("amount", 0)
+            return 0
+        return ""
 
     def _apply_selection_highlight(self):
         for idx, lbl in enumerate(self.employee_header_labels):
@@ -229,6 +355,89 @@ class PayrollBatchDialog(tk.Toplevel):
         dlg = PayrollEditorDialog(self, self.conn, payroll_id, pay_names, deduct_names)
         self.wait_window(dlg)
         self.refresh()
+
+    def add_missing_employees(self):
+        missing = self._missing_employees_for_this_pay_date()
+        if not missing:
+            messagebox.showinfo("確認", "この支払日に追加できる未計算社員はいません。")
+            return
+
+        preview = "\n".join(f"- {e['employee_code']} {e['name_kanji']}" for e, _ in missing[:10])
+        if len(missing) > 10:
+            preview += f"\n...ほか {len(missing) - 10} 名"
+        ok = messagebox.askyesno(
+            "未計算社員の追加",
+            f"以下の未計算社員を追加します。\n\n{preview}\n\nよろしいですか？",
+        )
+        if not ok:
+            return
+
+        month_info = parse_month(self.target_month)
+        cur = self.conn.cursor()
+        for employee, pay_date in missing:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO payroll_monthly(
+                  target_month, employee_id,
+                  wage_period_start, wage_period_end,
+                  pay_date_auto, pay_date_applied
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.target_month,
+                    int(employee["employee_id"]),
+                    month_info.start.isoformat(),
+                    month_info.end.isoformat(),
+                    pay_date,
+                    pay_date,
+                ),
+            )
+        self.conn.commit()
+
+        try:
+            db.recalc_target_month(self.conn, self.target_month)
+        except Exception as e:
+            messagebox.showwarning("自動計算", f"追加後の自動計算でエラーが発生しました。\n\n詳細: {e}")
+
+        if self.master is not None and hasattr(self.master, "refresh"):
+            try:
+                self.master.refresh()
+            except Exception:
+                pass
+        self.refresh()
+        messagebox.showinfo("完了", f"{len(missing)} 名を追加しました。")
+
+    def _missing_employees_for_this_pay_date(self):
+        existing_employee_ids = {
+            int(row[0])
+            for row in self.conn.execute(
+                "SELECT employee_id FROM payroll_monthly WHERE target_month = ?",
+                (self.target_month,),
+            ).fetchall()
+        }
+        missing = []
+        for employee in db.list_employees(self.conn):
+            employee_id = int(employee["employee_id"])
+            if employee_id in existing_employee_ids:
+                continue
+            pay_date = self._calc_employee_pay_date(employee)
+            if pay_date == self.pay_date_applied:
+                missing.append((employee, pay_date))
+        return missing
+
+    def _calc_employee_pay_date(self, employee):
+        schedule_id = employee["payment_schedule_id"] if "payment_schedule_id" in employee.keys() else None
+        if schedule_id:
+            schedule = db.get_payment_schedule_by_id(self.conn, int(schedule_id))
+            if schedule:
+                return db.calc_pay_date(
+                    self.target_month,
+                    schedule["closing_mode"],
+                    int(schedule["pay_day"]),
+                )
+
+        payday_day = int(employee["payday_group"] or 0)
+        return compute_pay_date(self.target_month, payday_day).isoformat()
 
     def override_paydate(self):
         payroll_id = self._selected_payroll_id()

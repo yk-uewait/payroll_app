@@ -8,7 +8,7 @@ from datetime import date
 import db
 from utils_dates import parse_month
 from bonus_batch_dialog import BonusBatchDialog
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 class BonusEditorDialog(tk.Toplevel):
     """賞与 追加/編集（モーダル）"""
@@ -77,6 +77,7 @@ class BonusEditorDialog(tk.Toplevel):
         ttk.Button(btns, text="キャンセル", command=self.destroy).pack(side="right")
 
         self.wait_visibility()
+        enable_enter_key_navigation(self)
         center_window(self, master)
         self.focus_set()
 
@@ -199,9 +200,22 @@ class BonusFrame(ttk.Frame):
             self.tree.column(c, width=w, anchor=anchor)
 
         self.tree.bind("<Double-1>", lambda e: self.open_selected_batch())
+        self.tree.bind("<Shift-MouseWheel>", self._on_tree_shift_mousewheel)
+
+        footer = ttk.Frame(self)
+        footer.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(footer, text="閉じる", command=self._close_window).pack(side="right", padx=5)
 
         self._load_years()
         self.refresh()
+        enable_enter_key_navigation(self)
+
+    def _close_window(self):
+        self.winfo_toplevel().destroy()
+
+    def _on_tree_shift_mousewheel(self, event):
+        self.tree.xview_scroll(int(-10 * (event.delta / 120)), "units")
+        return "break"
 
     def _load_years(self):
         cur = self.conn.cursor()

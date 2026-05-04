@@ -26,6 +26,8 @@ EMPLOYEE_CSV_COLUMNS = [
     "源泉",
     "扶養人数",
     "都道府県",
+    "市区町村",
+    "住所",
     "メモ",
 ]
 
@@ -388,6 +390,8 @@ def upsert_employee(
     tax_type="甲",
     dependents_count=0,
     work_prefecture_name="",
+    address_city="",
+    address_detail="",
     birth_date=None,
     payment_schedule_id=None,
     hire_date=None,
@@ -404,11 +408,11 @@ def upsert_employee(
         INSERT INTO employees(
           employee_code, name_kanji, department, payday_group,
           std_monthly_wage, std_pension_wage,
-          tax_type, dependents_count, work_prefecture_name, birth_date,
+          tax_type, dependents_count, work_prefecture_name, address_city, address_detail, birth_date,
           payment_schedule_id, hire_date, leave_date, retirement_processed, memo,
           department_id, position_id, employment_type_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_code) DO UPDATE SET
           name_kanji=excluded.name_kanji,
           department=excluded.department,
@@ -420,6 +424,8 @@ def upsert_employee(
           tax_type=excluded.tax_type,
           dependents_count=excluded.dependents_count,
           work_prefecture_name=excluded.work_prefecture_name,
+          address_city=excluded.address_city,
+          address_detail=excluded.address_detail,
           birth_date=excluded.birth_date,
           payment_schedule_id=excluded.payment_schedule_id,
           hire_date=excluded.hire_date,
@@ -441,6 +447,8 @@ def upsert_employee(
             tax_type,
             dependents_count,
             work_prefecture_name,
+            address_city,
+            address_detail,
             birth_date,
             payment_schedule_id,
             hire_date,
@@ -904,6 +912,7 @@ def calculate_dynamic_payroll_item_totals(
             "name": row_get(row, "item_name"),
             "item_kind": item_kind,
             "amount": amount,
+            "display_order": int(row_get(row, "display_order", 0) or 0),
             "source": row_get(row, "source"),
             "is_locked": int(row_get(row, "is_locked", 0) or 0),
         }
@@ -1023,11 +1032,14 @@ def get_effective_payroll_row_totals(conn, r) -> dict:
     return get_fixed_payroll_row_totals(r)
 
 def _system_deduction_total_from_row(r) -> int:
-    social = int(row_get(r, "social_ins_total_calc", 0) or 0)
+    health = int(row_get(r, "health_ins_employee", 0) or 0)
+    care = int(row_get(r, "care_ins_employee", 0) or 0)
+    childcare = int(row_get(r, "childcare_support_employee", 0) or 0)
+    pension = int(row_get(r, "pension_ins_employee", 0) or 0)
     emp = int(row_get(r, "emp_ins_employee", 0) or 0)
     withholding = int(row_get(r, "withholding_tax_applied", 0) or 0)
     resident = int(row_get(r, "resident_tax_applied", 0) or 0)
-    return max(0, social + emp + withholding + resident)
+    return max(0, health + care + childcare + pension + emp + withholding + resident)
 
 def build_payroll_calculation_basis(conn, r) -> dict:
     """
@@ -1122,6 +1134,159 @@ def _aggregate_payroll_basis_rows(rows, conn):
             g["dynamic_employee_count"] += 1
     return [grouped[k] for k in sorted(grouped.keys(), key=lambda x: (x[1] or "", x[0] or ""))]
 
+def _system_deduction_items_for_output(r) -> list[dict]:
+    return [
+        {"code": "health_ins_employee", "name": "健康保険料", "amount": int(row_get(r, "health_ins_employee", 0) or 0), "display_order": 10},
+        {"code": "care_ins_employee", "name": "介護保険料", "amount": int(row_get(r, "care_ins_employee", 0) or 0), "display_order": 20},
+        {"code": "childcare_support_employee", "name": "子ども・子育て支援金", "amount": int(row_get(r, "childcare_support_employee", 0) or 0), "display_order": 30},
+        {"code": "pension_ins_employee", "name": "厚生年金保険料", "amount": int(row_get(r, "pension_ins_employee", 0) or 0), "display_order": 40},
+        {"code": "emp_ins_employee", "name": "雇用保険料", "amount": int(row_get(r, "emp_ins_employee", 0) or 0), "display_order": 50},
+        {"code": "withholding_tax_applied", "name": "源泉所得税", "amount": int(row_get(r, "withholding_tax_applied", 0) or 0), "display_order": 60},
+        {"code": "resident_tax_applied", "name": "住民税", "amount": int(row_get(r, "resident_tax_applied", 0) or 0), "display_order": 70},
+    ]
+
+def _fixed_pay_items_for_output(r) -> list[dict]:
+    items = [
+        ("officer_pay", "役員報酬", 10),
+        ("base_salary", "基本給", 20),
+        ("deemed_ot", "みなし残業手当", 30),
+        ("overtime_pay", "残業手当", 40),
+        ("special_allow", "特別手当", 50),
+        ("commute_nontax", "非課税通勤手当", 60),
+    ]
+    out = [
+        {"code": code, "name": name, "amount": int(row_get(r, code, 0) or 0), "display_order": order}
+        for code, name, order in items
+    ]
+    for i in range(1, 6):
+        out.append({
+            "code": f"pay_free{i}",
+            "name": f"支給自由{i}",
+            "amount": int(row_get(r, f"pay_free{i}", 0) or 0),
+            "display_order": 100 + i,
+        })
+    return out
+
+def _fixed_deduction_items_for_output(r) -> list[dict]:
+    out = [{"code": "travel_saving", "name": "旅行積立金", "amount": int(row_get(r, "travel_saving", 0) or 0), "display_order": 10}]
+    for i in range(1, 6):
+        out.append({
+            "code": f"deduct_free{i}",
+            "name": f"控除自由{i}",
+            "amount": int(row_get(r, f"deduct_free{i}", 0) or 0),
+            "display_order": 100 + i,
+        })
+    return out
+
+def _payroll_output_source_row(conn, payroll_id: int):
+    return conn.execute(
+        """
+        SELECT
+          p.*,
+          e.employee_code,
+          e.name_kanji,
+          e.department,
+          e.department_id,
+          e.position_id,
+          e.employment_type_id,
+          COALESCE(d.name, e.department, '') AS department_name,
+          COALESCE(pos.name, '') AS position_name,
+          COALESCE(et.name, '') AS employment_type_name
+        FROM payroll_monthly p
+        JOIN employees e ON e.employee_id = p.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
+        WHERE p.payroll_id = ?
+        """,
+        (payroll_id,),
+    ).fetchone()
+
+def build_payroll_output_data(conn, payroll_or_row) -> dict:
+    payroll_id = int(row_get(payroll_or_row, "payroll_id", payroll_or_row) or 0)
+    r = _payroll_output_source_row(conn, payroll_id)
+    if not r:
+        raise ValueError("対象の給与データが見つかりません。")
+
+    basis = build_payroll_calculation_basis(conn, r)
+    if basis["use_dynamic_items"]:
+        pay_items = [
+            {
+                "item_id": d.get("item_id"),
+                "code": d.get("code"),
+                "name": d.get("name") or "",
+                "amount": int(d.get("amount") or 0),
+                "display_order": int(d.get("display_order") or 0),
+            }
+            for d in basis["item_details"]
+            if d.get("item_kind") == "pay"
+        ]
+        deduction_items = [
+            {
+                "item_id": d.get("item_id"),
+                "code": d.get("code"),
+                "name": d.get("name") or "",
+                "amount": int(d.get("amount") or 0),
+                "display_order": int(d.get("display_order") or 0),
+            }
+            for d in basis["item_details"]
+            if d.get("item_kind") == "deduction"
+        ]
+    else:
+        pay_items = _fixed_pay_items_for_output(r)
+        deduction_items = _fixed_deduction_items_for_output(r)
+
+    pay_items.sort(key=lambda x: (int(x.get("display_order") or 0), str(x.get("name") or "")))
+    deduction_items.sort(key=lambda x: (int(x.get("display_order") or 0), str(x.get("name") or "")))
+    system_deductions = _system_deduction_items_for_output(r)
+
+    target_month = row_get(r, "target_month", "") or ""
+    year = month = None
+    if len(target_month) == 7 and "-" in target_month:
+        try:
+            year, month = (int(x) for x in target_month.split("-", 1))
+        except Exception:
+            pass
+
+    return {
+        "payroll_id": payroll_id,
+        "employee_id": int(row_get(r, "employee_id", 0) or 0),
+        "employee_code": row_get(r, "employee_code", "") or "",
+        "employee_name": row_get(r, "name_kanji", "") or "",
+        "department_name": row_get(r, "department_name", "") or "",
+        "position_name": row_get(r, "position_name", "") or "",
+        "employment_type_name": row_get(r, "employment_type_name", "") or "",
+        "target_month": target_month,
+        "year": year,
+        "month": month,
+        "pay_date": row_get(r, "pay_date_applied", "") or "",
+        "use_dynamic_items": basis["use_dynamic_items"],
+        "pay_items": pay_items,
+        "deduction_items": deduction_items,
+        "system_deductions": system_deductions,
+        "total_pay": basis["total_pay"],
+        "taxable_pay": basis["taxable_pay"],
+        "non_taxable_pay": basis["non_taxable_pay"],
+        "employment_insurance_base": basis["employment_insurance_base"],
+        "social_insurance_base": basis["social_insurance_base"],
+        "custom_deduction_total": basis["custom_deduction_total"],
+        "system_deduction_total": basis["system_deduction_total"],
+        "health_insurance": basis["health_insurance"],
+        "nursing_care_insurance": basis["nursing_care_insurance"],
+        "child_care_contribution": basis["child_care_contribution"],
+        "pension_insurance": basis["pension_insurance"],
+        "employment_insurance": basis["employment_insurance"],
+        "income_tax": basis["income_tax"],
+        "resident_tax": basis["resident_tax"],
+        "total_deduction": basis["total_deduction"],
+        "net_pay": basis["net_pay"],
+        "note": row_get(r, "note", "") or "",
+    }
+
+def get_payroll_output_data_for_month(conn, target_month: str) -> list[dict]:
+    rows = get_payroll_rows(conn, target_month)
+    return [build_payroll_output_data(conn, r) for r in rows]
+
 def _normalize_employee_csv_date(value: str | None) -> str | None:
     s = (value or "").strip()
     if not s:
@@ -1202,6 +1367,8 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
         tax_type = _employee_csv_cell(row, "tax_type", "源泉区分", "源泉", default="甲") or "甲"
         dependents_count = int(_employee_csv_cell(row, "dependents_count", "扶養人数", "扶養", default="0").replace(",", "") or 0)
         work_prefecture_name = _employee_csv_cell(row, "work_prefecture_name", "勤務地都道府県", "都道府県")
+        address_city = _employee_csv_cell(row, "address_city", "市区町村")
+        address_detail = _employee_csv_cell(row, "address_detail", "住所", "それ以降の住所")
         birth_date = _normalize_employee_csv_date(_employee_csv_cell(row, "birth_date", "生年月日"))
         hire_date = _normalize_employee_csv_date(_employee_csv_cell(row, "hire_date", "入社日"))
         leave_date = _normalize_employee_csv_date(_employee_csv_cell(row, "leave_date", "退職日"))
@@ -1219,6 +1386,8 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
             tax_type,
             dependents_count,
             work_prefecture_name,
+            address_city,
+            address_detail,
             birth_date,
             payment_schedule_id,
             hire_date,
@@ -1249,6 +1418,8 @@ def list_employee_export_rows(conn) -> list[dict]:
                 "源泉": row_get(e, "tax_type", "甲") or "甲",
                 "扶養人数": row_get(e, "dependents_count", 0) or 0,
                 "都道府県": row_get(e, "work_prefecture_name", "") or "",
+                "市区町村": row_get(e, "address_city", "") or "",
+                "住所": row_get(e, "address_detail", "") or "",
                 "メモ": row_get(e, "memo", "") or "",
             }
         )
@@ -1820,6 +1991,10 @@ def ensure_schema_migrations(conn):
     
     if not _column_exists(conn, "employees", "work_prefecture_name"):
         conn.execute("ALTER TABLE employees ADD COLUMN work_prefecture_name TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "employees", "address_city"):
+        conn.execute("ALTER TABLE employees ADD COLUMN address_city TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "employees", "address_detail"):
+        conn.execute("ALTER TABLE employees ADD COLUMN address_detail TEXT NOT NULL DEFAULT ''")
 
     # 生年月日（介護保険判定用）
     if not _column_exists(conn, "employees", "birth_date"):
@@ -2665,6 +2840,58 @@ def list_resident_tax(conn, employee_id: int):
     )
     return cur.fetchall()
 
+def get_resident_tax_direct_amount(conn, employee_id: int, start_month: str) -> int:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT amount FROM resident_tax_history
+        WHERE employee_id=? AND start_month=?
+        """,
+        (employee_id, start_month),
+    )
+    row = cur.fetchone()
+    return int(row["amount"]) if row else 0
+
+def list_resident_tax_for_period(conn, start_month: str, end_month: str):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT *
+        FROM resident_tax_history
+        WHERE start_month >= ? AND start_month <= ?
+        ORDER BY employee_id, start_month
+        """,
+        (start_month, end_month),
+    )
+    return cur.fetchall()
+
+def upsert_resident_tax_annual_values(conn, employee_id: int, month_amount_map: dict, note: str | None = None):
+    cur = conn.cursor()
+    for start_month, amount in month_amount_map.items():
+        cur.execute(
+            """
+            INSERT INTO resident_tax_history(employee_id, start_month, amount, note)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(employee_id, start_month) DO UPDATE SET
+              amount=excluded.amount,
+              note=excluded.note,
+              updated_at=datetime('now')
+            """,
+            (employee_id, start_month, int(amount or 0), note),
+        )
+    conn.commit()
+
+def apply_resident_tax_auto_for_period(conn, start_month: str, end_month: str):
+    y, m = (int(x) for x in start_month.split("-", 1))
+    ey, em = (int(x) for x in end_month.split("-", 1))
+    while (y, m) <= (ey, em):
+        apply_resident_tax_auto(conn, f"{y:04d}-{m:02d}")
+        if m == 12:
+            y += 1
+            m = 1
+        else:
+            m += 1
+
 def get_resident_tax_amount_for_month(conn, employee_id: int, target_month: str) -> int:
     """
     Find the latest resident tax record with start_month <= target_month.
@@ -3094,6 +3321,281 @@ def _safe_sheet_title(s: str) -> str:
         s = "sheet"
     return s[:31]
 
+def _export_pay_deduct_report_month_transposed(conn, target_month: str, file_path: str) -> None:
+    output_rows = get_payroll_output_data_for_month(conn, target_month)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "支給控除一覧"
+
+    company = get_company_settings(conn)
+    company_name = row_get(company, "company_name", "") if company else ""
+
+    def item_key(item):
+        return item.get("item_id") or item.get("code") or item.get("name")
+
+    def collect_items(source_key: str):
+        found = {}
+        for data in output_rows:
+            for item in data[source_key]:
+                key = item_key(item)
+                if key not in found:
+                    found[key] = {
+                        "key": key,
+                        "name": item.get("name") or "",
+                        "display_order": int(item.get("display_order") or 0),
+                    }
+        return sorted(found.values(), key=lambda x: (x["display_order"], x["name"]))
+
+    pay_columns = collect_items("pay_items")
+    deduction_columns = collect_items("deduction_items")
+    system_columns = [
+        {"key": "health_ins_employee", "name": "健康保険料"},
+        {"key": "care_ins_employee", "name": "介護保険料"},
+        {"key": "childcare_support_employee", "name": "子ども・子育て支援金"},
+        {"key": "pension_ins_employee", "name": "厚生年金保険料"},
+        {"key": "emp_ins_employee", "name": "雇用保険料"},
+        {"key": "withholding_tax_applied", "name": "源泉所得税"},
+        {"key": "resident_tax_applied", "name": "住民税"},
+    ]
+
+    title = f"{target_month} 支給控除一覧"
+    if company_name:
+        title = f"{company_name}　{title}"
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=13)
+
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    money_fill = PatternFill("solid", fgColor="F7F7F7")
+    header_font = Font(bold=True)
+    align_center = Alignment(horizontal="center", vertical="center")
+    align_right = Alignment(horizontal="right", vertical="center")
+    align_left = Alignment(horizontal="left", vertical="center")
+
+    ws.append([])
+    ws.append(["項目"] + [f"{data['employee_code']} {data['employee_name']}".strip() for data in output_rows])
+    for cell in ws[3]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+
+    def append_info_row(label: str, values: list):
+        ws.append([label] + values)
+        row_idx = ws.max_row
+        ws.cell(row=row_idx, column=1).font = header_font
+        for col_idx in range(1, ws.max_column + 1):
+            ws.cell(row=row_idx, column=col_idx).alignment = align_left
+
+    def append_money_row(label: str, values: list, bold: bool = False):
+        ws.append([label] + values)
+        row_idx = ws.max_row
+        ws.cell(row=row_idx, column=1).alignment = align_left
+        if bold:
+            ws.cell(row=row_idx, column=1).font = header_font
+        for col_idx in range(2, ws.max_column + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            if cell.value is not None:
+                cell.number_format = "#,##0"
+            cell.alignment = align_right
+            cell.fill = money_fill
+            if bold:
+                cell.font = header_font
+
+    def item_amounts(source_key: str, key):
+        values = []
+        for data in output_rows:
+            item_map = {item_key(item): int(item.get("amount") or 0) for item in data[source_key]}
+            values.append(item_map.get(key, 0))
+        return values
+
+    append_info_row("社員コード", [data["employee_code"] for data in output_rows])
+    append_info_row("氏名", [data["employee_name"] for data in output_rows])
+    append_info_row("部署", [data["department_name"] for data in output_rows])
+    append_info_row("役職", [data["position_name"] for data in output_rows])
+    append_info_row("雇用区分", [data["employment_type_name"] for data in output_rows])
+
+    append_money_row("【支給】", [None] * len(output_rows), bold=True)
+    for col in pay_columns:
+        append_money_row(col["name"], item_amounts("pay_items", col["key"]))
+    append_money_row("総支給額", [data["total_pay"] for data in output_rows], bold=True)
+    append_money_row("課税支給額", [data["taxable_pay"] for data in output_rows])
+    append_money_row("非課税支給額", [data["non_taxable_pay"] for data in output_rows])
+    append_money_row("雇用保険対象額", [data["employment_insurance_base"] for data in output_rows])
+    append_money_row("社会保険対象額", [data["social_insurance_base"] for data in output_rows])
+
+    append_money_row("【システム控除】", [None] * len(output_rows), bold=True)
+    for col in system_columns:
+        values = []
+        for data in output_rows:
+            system_map = {item.get("code"): int(item.get("amount") or 0) for item in data["system_deductions"]}
+            values.append(system_map.get(col["key"], 0))
+        append_money_row(col["name"], values)
+
+    append_money_row("【会社独自控除】", [None] * len(output_rows), bold=True)
+    for col in deduction_columns:
+        append_money_row(col["name"], item_amounts("deduction_items", col["key"]))
+    append_money_row("会社独自控除合計", [data["custom_deduction_total"] for data in output_rows], bold=True)
+    append_money_row("システム控除合計", [data["system_deduction_total"] for data in output_rows], bold=True)
+    append_money_row("控除合計", [data["total_deduction"] for data in output_rows], bold=True)
+    append_money_row("差引支給額", [data["net_pay"] for data in output_rows], bold=True)
+
+    ws.freeze_panes = "B4"
+    ws.auto_filter.ref = ws.dimensions
+    ws.column_dimensions["A"].width = 24
+    for col_idx in range(2, ws.max_column + 1):
+        header = ws.cell(row=3, column=col_idx).value or ""
+        ws.column_dimensions[get_column_letter(col_idx)].width = max(14, min(24, len(str(header)) + 4))
+
+    wb.save(file_path)
+
+def _export_pay_deduct_report_month_by_department(conn, target_month: str, file_path: str) -> None:
+    output_rows = get_payroll_output_data_for_month(conn, target_month)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    company = get_company_settings(conn)
+    company_name = row_get(company, "company_name", "") if company else ""
+
+    def item_key(item):
+        return item.get("item_id") or item.get("code") or item.get("name")
+
+    def collect_items(source_key: str):
+        found = {}
+        for data in output_rows:
+            for item in data[source_key]:
+                key = item_key(item)
+                if key not in found:
+                    found[key] = {
+                        "key": key,
+                        "name": item.get("name") or "",
+                        "display_order": int(item.get("display_order") or 0),
+                    }
+        return sorted(found.values(), key=lambda x: (x["display_order"], x["name"]))
+
+    pay_columns = collect_items("pay_items")
+    deduction_columns = collect_items("deduction_items")
+    system_columns = [
+        {"key": "health_ins_employee", "name": "健康保険料"},
+        {"key": "care_ins_employee", "name": "介護保険料"},
+        {"key": "childcare_support_employee", "name": "子ども・子育て支援金"},
+        {"key": "pension_ins_employee", "name": "厚生年金保険料"},
+        {"key": "emp_ins_employee", "name": "雇用保険料"},
+        {"key": "withholding_tax_applied", "name": "源泉所得税"},
+        {"key": "resident_tax_applied", "name": "住民税"},
+    ]
+
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    money_fill = PatternFill("solid", fgColor="F7F7F7")
+    subtotal_fill = PatternFill("solid", fgColor="FFF2CC")
+    header_font = Font(bold=True)
+    title_font = Font(bold=True, size=13)
+    align_center = Alignment(horizontal="center", vertical="center")
+    align_right = Alignment(horizontal="right", vertical="center")
+    align_left = Alignment(horizontal="left", vertical="center")
+
+    def item_amounts(rows: list[dict], source_key: str, key):
+        values = []
+        for data in rows:
+            item_map = {item_key(item): int(item.get("amount") or 0) for item in data[source_key]}
+            values.append(item_map.get(key, 0))
+        return values
+
+    def append_info_row(ws, label: str, values: list):
+        ws.append([label] + values + [""])
+        row_idx = ws.max_row
+        ws.cell(row=row_idx, column=1).font = header_font
+        for col_idx in range(1, ws.max_column + 1):
+            ws.cell(row=row_idx, column=col_idx).alignment = align_left
+
+    def append_money_row(ws, label: str, values: list, bold: bool = False):
+        total = sum(int(v or 0) for v in values)
+        ws.append([label] + values + [total])
+        row_idx = ws.max_row
+        ws.cell(row=row_idx, column=1).alignment = align_left
+        if bold:
+            ws.cell(row=row_idx, column=1).font = header_font
+        for col_idx in range(2, ws.max_column + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            if cell.value is not None:
+                cell.number_format = "#,##0"
+            cell.alignment = align_right
+            cell.fill = subtotal_fill if bold else money_fill
+            if bold:
+                cell.font = header_font
+
+    def build_sheet(sheet_title: str, rows: list[dict]):
+        ws = wb.create_sheet(title=_safe_sheet_title(sheet_title))
+        title = f"{target_month} 支給控除一覧"
+        if sheet_title != "\u5168\u793e":
+            title = f"{title}（{sheet_title}）"
+        if company_name:
+            title = f"{company_name}　{title}"
+        ws.cell(row=1, column=1, value=title).font = title_font
+
+        ws.append([])
+        ws.append(["\u9805\u76ee"] + [f"{data['employee_code']} {data['employee_name']}".strip() for data in rows] + ["\u5408\u8a08"])
+        for cell in ws[3]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = align_center
+
+        append_info_row(ws, "社員コード", [data["employee_code"] for data in rows])
+        append_info_row(ws, "氏名", [data["employee_name"] for data in rows])
+        append_info_row(ws, "部署", [data["department_name"] for data in rows])
+        append_info_row(ws, "役職", [data["position_name"] for data in rows])
+        append_info_row(ws, "雇用区分", [data["employment_type_name"] for data in rows])
+
+        append_money_row(ws, "【支給】", [0] * len(rows), bold=True)
+        for col in pay_columns:
+            append_money_row(ws, col["name"], item_amounts(rows, "pay_items", col["key"]))
+        append_money_row(ws, "総支給額", [data["total_pay"] for data in rows], bold=True)
+        append_money_row(ws, "課税支給額", [data["taxable_pay"] for data in rows])
+        append_money_row(ws, "非課税支給額", [data["non_taxable_pay"] for data in rows])
+        append_money_row(ws, "雇用保険対象額", [data["employment_insurance_base"] for data in rows])
+        append_money_row(ws, "社会保険対象額", [data["social_insurance_base"] for data in rows])
+
+        append_money_row(ws, "【システム控除】", [0] * len(rows), bold=True)
+        for col in system_columns:
+            values = []
+            for data in rows:
+                system_map = {item.get("code"): int(item.get("amount") or 0) for item in data["system_deductions"]}
+                values.append(system_map.get(col["key"], 0))
+            append_money_row(ws, col["name"], values)
+
+        append_money_row(ws, "【会社独自控除】", [0] * len(rows), bold=True)
+        for col in deduction_columns:
+            append_money_row(ws, col["name"], item_amounts(rows, "deduction_items", col["key"]))
+        append_money_row(ws, "会社独自控除合計", [data["custom_deduction_total"] for data in rows], bold=True)
+        append_money_row(ws, "システム控除合計", [data["system_deduction_total"] for data in rows], bold=True)
+        append_money_row(ws, "控除合計", [data["total_deduction"] for data in rows], bold=True)
+        append_money_row(ws, "差引支給額", [data["net_pay"] for data in rows], bold=True)
+
+        ws.freeze_panes = "B4"
+        ws.auto_filter.ref = ws.dimensions
+        ws.column_dimensions["A"].width = 24
+        for col_idx in range(2, ws.max_column + 1):
+            header = ws.cell(row=3, column=col_idx).value or ""
+            ws.column_dimensions[get_column_letter(col_idx)].width = max(14, min(24, len(str(header)) + 4))
+
+    build_sheet("\u5168\u793e", output_rows)
+
+    departments = {}
+    for data in output_rows:
+        key = (data.get("department_name") or "\u90e8\u7f72\u672a\u8a2d\u5b9a").strip() or "\u90e8\u7f72\u672a\u8a2d\u5b9a"
+        departments.setdefault(key, []).append(data)
+    for dept_name in sorted(departments):
+        build_sheet(dept_name, departments[dept_name])
+
+    wb.save(file_path)
+
 
 def export_pay_deduct_report_month(conn, target_month: str, file_path: str) -> None:
     """
@@ -3101,6 +3603,170 @@ def export_pay_deduct_report_month(conn, target_month: str, file_path: str) -> N
     見せ方B:
       健康保険料（介護保険料）→ 子ども・子育て支援金 → 厚生年金保険料 → 雇用保険料
     """
+    return _export_pay_deduct_report_month_by_department(conn, target_month, file_path)
+
+    output_rows = get_payroll_output_data_for_month(conn, target_month)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "動的支給控除一覧"
+
+    company = get_company_settings(conn)
+    company_name = row_get(company, "company_name", "") if company else ""
+
+    def item_key(item):
+        return item.get("item_id") or item.get("code") or item.get("name")
+
+    def collect_items(source_key: str):
+        found = {}
+        for data in output_rows:
+            for item in data[source_key]:
+                key = item_key(item)
+                if key not in found:
+                    found[key] = {
+                        "key": key,
+                        "name": item.get("name") or "",
+                        "display_order": int(item.get("display_order") or 0),
+                    }
+        return sorted(found.values(), key=lambda x: (x["display_order"], x["name"]))
+
+    pay_columns = collect_items("pay_items")
+    deduction_columns = collect_items("deduction_items")
+    system_columns = [
+        {"key": "health_ins_employee", "name": "健康保険料"},
+        {"key": "care_ins_employee", "name": "介護保険料"},
+        {"key": "childcare_support_employee", "name": "子ども・子育て支援金"},
+        {"key": "pension_ins_employee", "name": "厚生年金保険料"},
+        {"key": "emp_ins_employee", "name": "雇用保険料"},
+        {"key": "withholding_tax_applied", "name": "源泉所得税"},
+        {"key": "resident_tax_applied", "name": "住民税"},
+    ]
+
+    title = f"{target_month} 支給控除一覧"
+    if company_name:
+        title = f"{company_name}　{title}"
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=13)
+
+    headers = ["社員コード", "氏名", "部署", "役職", "雇用区分"]
+    headers += [c["name"] for c in pay_columns]
+    headers += ["総支給額", "課税支給額", "非課税支給額", "雇用保険対象額", "社会保険対象額"]
+    headers += [c["name"] for c in system_columns]
+    headers += [c["name"] for c in deduction_columns]
+    headers += ["会社独自控除合計", "システム控除合計", "控除合計", "差引支給額"]
+    ws.append([])
+    ws.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    money_fill = PatternFill("solid", fgColor="F7F7F7")
+    header_font = Font(bold=True)
+    align_center = Alignment(horizontal="center", vertical="center")
+    align_right = Alignment(horizontal="right", vertical="center")
+    align_left = Alignment(horizontal="left", vertical="center")
+
+    for cell in ws[3]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+
+    for data in output_rows:
+        pay_map = {item_key(item): int(item.get("amount") or 0) for item in data["pay_items"]}
+        deduction_map = {item_key(item): int(item.get("amount") or 0) for item in data["deduction_items"]}
+        system_map = {item.get("code"): int(item.get("amount") or 0) for item in data["system_deductions"]}
+        row = [
+            data["employee_code"],
+            data["employee_name"],
+            data["department_name"],
+            data["position_name"],
+            data["employment_type_name"],
+        ]
+        row += [pay_map.get(c["key"], 0) for c in pay_columns]
+        row += [
+            data["total_pay"],
+            data["taxable_pay"],
+            data["non_taxable_pay"],
+            data["employment_insurance_base"],
+            data["social_insurance_base"],
+        ]
+        row += [system_map.get(c["key"], 0) for c in system_columns]
+        row += [deduction_map.get(c["key"], 0) for c in deduction_columns]
+        row += [
+            data["custom_deduction_total"],
+            data["system_deduction_total"],
+            data["total_deduction"],
+            data["net_pay"],
+        ]
+        ws.append(row)
+
+    for row in ws.iter_rows(min_row=4, max_row=ws.max_row):
+        for idx, cell in enumerate(row, start=1):
+            if idx >= 6:
+                cell.number_format = "#,##0"
+                cell.alignment = align_right
+                cell.fill = money_fill
+            else:
+                cell.alignment = align_left
+
+    ws.freeze_panes = "F4"
+    ws.auto_filter.ref = ws.dimensions
+    for col_idx in range(1, ws.max_column + 1):
+        header = ws.cell(row=3, column=col_idx).value or ""
+        width = max(10, min(24, len(str(header)) + 4))
+        if col_idx <= 5:
+            width = max(width, 14)
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    slip_ws = wb.create_sheet("給与明細")
+    current_row = 1
+    for data in output_rows:
+        slip_title = f"{data['target_month']} 給与明細　{data['employee_code']}　{data['employee_name']}"
+        if company_name:
+            slip_title = f"{company_name}　{slip_title}"
+        slip_ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=4)
+        slip_ws.cell(row=current_row, column=1, value=slip_title).font = Font(bold=True, size=12)
+        current_row += 1
+        slip_ws.cell(row=current_row, column=1, value="部署")
+        slip_ws.cell(row=current_row, column=2, value=data["department_name"])
+        slip_ws.cell(row=current_row, column=3, value="支給日")
+        slip_ws.cell(row=current_row, column=4, value=data["pay_date"])
+        current_row += 2
+        for col, label in enumerate(["支給", "金額", "控除", "金額"], start=1):
+            cell = slip_ws.cell(row=current_row, column=col, value=label)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = align_center
+        current_row += 1
+
+        pay_items = data["pay_items"] + [{"name": "総支給額", "amount": data["total_pay"]}]
+        deduct_items = data["system_deductions"] + data["deduction_items"] + [{"name": "控除合計", "amount": data["total_deduction"]}]
+        for i in range(max(len(pay_items), len(deduct_items))):
+            if i < len(pay_items):
+                slip_ws.cell(row=current_row, column=1, value=pay_items[i]["name"])
+                cell = slip_ws.cell(row=current_row, column=2, value=int(pay_items[i]["amount"] or 0))
+                cell.number_format = "#,##0"
+                cell.alignment = align_right
+            if i < len(deduct_items):
+                slip_ws.cell(row=current_row, column=3, value=deduct_items[i]["name"])
+                cell = slip_ws.cell(row=current_row, column=4, value=int(deduct_items[i]["amount"] or 0))
+                cell.number_format = "#,##0"
+                cell.alignment = align_right
+            current_row += 1
+        slip_ws.cell(row=current_row, column=3, value="差引支給額").font = header_font
+        cell = slip_ws.cell(row=current_row, column=4, value=data["net_pay"])
+        cell.font = header_font
+        cell.number_format = "#,##0"
+        cell.alignment = align_right
+        current_row += 3
+
+    for col_idx, width in enumerate([24, 14, 24, 14], start=1):
+        slip_ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    wb.save(file_path)
+    return
+
     rows = get_payroll_rows(conn, target_month)
 
     from openpyxl import Workbook
@@ -3395,7 +4061,183 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
     wb.save(file_path)
 
 
+def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str) -> None:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT employee_id, employee_code, name_kanji, department
+        FROM employees
+        ORDER BY employee_id
+        """
+    )
+    emps = cur.fetchall()
+
+    monthly_rows = []
+    for month in range(1, 13):
+        monthly_rows.extend(get_payroll_rows(conn, f"{year:04d}-{month:02d}"))
+    by_emp_month = {}
+    for r in monthly_rows:
+        try:
+            mm = int(str(row_get(r, "target_month", "")).split("-")[1])
+        except Exception:
+            continue
+        by_emp_month[(int(row_get(r, "employee_id", 0) or 0), mm)] = r
+
+    cur.execute(
+        """
+        SELECT *
+        FROM payroll_bonus
+        WHERE substr(target_month, 1, 4) = ?
+        ORDER BY target_month, pay_date
+        """,
+        (str(year),),
+    )
+    by_emp_bonus = {}
+    for r in cur.fetchall():
+        try:
+            mm = int(str(row_get(r, "target_month", "")).split("-")[1])
+        except Exception:
+            mm = 0
+        by_emp_bonus.setdefault(int(row_get(r, "employee_id", 0) or 0), []).append((mm, r))
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    font_h1 = Font(bold=True, size=12)
+    font_head = Font(bold=True)
+    fill_subtotal = PatternFill("solid", fgColor="FFF2CC")
+    fill_total = PatternFill("solid", fgColor="D9EAD3")
+    align_l = Alignment(horizontal="left", vertical="center")
+    align_c = Alignment(horizontal="center", vertical="center")
+    align_r = Alignment(horizontal="right", vertical="center")
+
+    headers = [
+        "月", "基本給", "役員報酬", "特別手当", "みなし残業", "残業", "非課税通勤",
+        "自由支給合計", "総支給", "健康・介護", "子ども・子育て", "厚生年金", "雇用保険",
+        "源泉所得税", "住民税", "その他控除", "控除合計", "差引支給額",
+    ]
+    fixed_codes = {"base_salary", "officer_pay", "special_allow", "deemed_ot", "overtime_pay", "commute_nontax"}
+
+    def pay_amount(data, code):
+        for item in data["pay_items"]:
+            if item.get("code") == code:
+                return int(item.get("amount") or 0)
+        return 0
+
+    def monthly_values(r):
+        if r is None:
+            return [0] * (len(headers) - 1)
+        data = build_payroll_output_data(conn, r)
+        free_pay_total = sum(int(item.get("amount") or 0) for item in data["pay_items"] if item.get("code") not in fixed_codes)
+        return [
+            pay_amount(data, "base_salary"),
+            pay_amount(data, "officer_pay"),
+            pay_amount(data, "special_allow"),
+            pay_amount(data, "deemed_ot"),
+            pay_amount(data, "overtime_pay"),
+            pay_amount(data, "commute_nontax"),
+            free_pay_total,
+            data["total_pay"],
+            data["health_insurance"] + data["nursing_care_insurance"],
+            data["child_care_contribution"],
+            data["pension_insurance"],
+            data["employment_insurance"],
+            data["income_tax"],
+            data["resident_tax"],
+            data["custom_deduction_total"],
+            data["total_deduction"],
+            data["net_pay"],
+        ]
+
+    def bonus_values(r):
+        bonus_amount = int(row_get(r, "bonus_amount", 0) or 0)
+        health_care = int(row_get(r, "health_ins_employee", 0) or 0) + int(row_get(r, "care_ins_employee", 0) or 0)
+        childcare = int(row_get(r, "childcare_support_employee", 0) or 0)
+        pension = int(row_get(r, "pension_ins_employee", 0) or 0)
+        emp_ins = int(row_get(r, "emp_ins_employee", 0) or 0)
+        withholding = int(row_get(r, "withholding_tax_applied", 0) or 0)
+        deduct_total = health_care + childcare + pension + emp_ins + withholding
+        net = bonus_amount - deduct_total
+        return [0, 0, 0, 0, 0, 0, 0, bonus_amount, health_care, childcare, pension, emp_ins, withholding, 0, 0, deduct_total, net]
+
+    def sum_rows(rows):
+        if not rows:
+            return [0] * (len(headers) - 1)
+        return [sum(row[i] for row in rows) for i in range(len(headers) - 1)]
+
+    def write_row(ws, row_idx, label, values, fill=None, bold=False):
+        cell = ws.cell(row=row_idx, column=1, value=label)
+        cell.alignment = align_c
+        if bold:
+            cell.font = font_head
+        if fill:
+            cell.fill = fill
+        for ci, val in enumerate(values, start=2):
+            cell = ws.cell(row=row_idx, column=ci, value=val)
+            cell.number_format = "#,##0"
+            cell.alignment = align_r
+            if bold:
+                cell.font = font_head
+            if fill:
+                cell.fill = fill
+
+    for e in emps:
+        emp_id = int(row_get(e, "employee_id", 0) or 0)
+        emp_code = row_get(e, "employee_code", "")
+        name = row_get(e, "name_kanji", "")
+        dept = row_get(e, "department", "")
+        ws = wb.create_sheet(title=_safe_sheet_title(f"{emp_code}_{name}"))
+
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        title_cell = ws.cell(row=1, column=1, value=f"賃金台帳（年次） {year}年　{emp_code}　{name}（{dept}）")
+        title_cell.font = font_h1
+        title_cell.alignment = align_l
+
+        for i, h in enumerate(headers, start=1):
+            cell = ws.cell(row=3, column=i, value=h)
+            cell.font = font_head
+            cell.alignment = align_c
+
+        out_row = 4
+        monthly_value_rows = []
+        for mm in range(1, 13):
+            values = monthly_values(by_emp_month.get((emp_id, mm)))
+            monthly_value_rows.append(values)
+            write_row(ws, out_row, mm, values)
+            out_row += 1
+
+        monthly_subtotal = sum_rows(monthly_value_rows)
+        write_row(ws, out_row, "給与小計", monthly_subtotal, fill=fill_subtotal, bold=True)
+        out_row += 2
+
+        bonus_value_rows = []
+        for idx, (mm, bonus_row) in enumerate(by_emp_bonus.get(emp_id, []), start=1):
+            values = bonus_values(bonus_row)
+            bonus_value_rows.append(values)
+            write_row(ws, out_row, f"賞与{idx}({mm}月)", values)
+            out_row += 1
+
+        bonus_subtotal = sum_rows(bonus_value_rows)
+        write_row(ws, out_row, "賞与小計", bonus_subtotal, fill=fill_subtotal, bold=True)
+        out_row += 1
+
+        grand_total = [monthly_subtotal[i] + bonus_subtotal[i] for i in range(len(monthly_subtotal))]
+        write_row(ws, out_row, "合計", grand_total, fill=fill_total, bold=True)
+
+        ws.column_dimensions["A"].width = 12
+        for i in range(2, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 14
+        ws.freeze_panes = "B4"
+
+    wb.save(file_path)
+
+
 def export_wage_ledger_year(conn, year: int, file_path: str) -> None:
+    return _export_wage_ledger_year_with_totals(conn, year, file_path)
     """
     賃金台帳（年次）を社員ごとにシート分けしてExcel出力する。
     見せ方B:

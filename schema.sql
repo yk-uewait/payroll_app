@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS employees (
   std_pension_wage INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
-  work_prefecture_name TEXT NOT NULL DEFAULT ''
+  work_prefecture_name TEXT NOT NULL DEFAULT '',
+  address_city     TEXT NOT NULL DEFAULT '',
+  address_detail   TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS payment_schedules (

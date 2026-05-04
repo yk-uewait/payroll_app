@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import db
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 
 class BonusBatchDialog(tk.Toplevel):
@@ -39,6 +39,7 @@ class BonusBatchDialog(tk.Toplevel):
         ttk.Button(btns, text="閉じる", command=self.destroy).pack(side="right", padx=5)
 
         self.refresh()
+        enable_enter_key_navigation(self)
         center_window(self, master)
 
     def _build_matrix_area(self):
@@ -61,12 +62,23 @@ class BonusBatchDialog(tk.Toplevel):
 
         self.matrix_frame.bind("<Configure>", self._on_matrix_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self.matrix_frame.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
 
     def _on_matrix_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_configure(self, event):
-        self.canvas.itemconfigure(self.canvas_window, height=max(event.height, 1))
+        self.canvas.itemconfigure(
+            self.canvas_window,
+            width=max(event.width, self.matrix_frame.winfo_reqwidth()),
+            height=max(event.height, self.matrix_frame.winfo_reqheight()),
+        )
+        self._on_matrix_configure()
+
+    def _on_shift_mousewheel(self, event):
+        self.canvas.xview_scroll(int(-10 * (event.delta / 120)), "units")
+        return "break"
 
     def refresh(self):
         def fmt_yen(v):
@@ -131,12 +143,15 @@ class BonusBatchDialog(tk.Toplevel):
             lbl.grid(row=0, column=col_idx, sticky="nsew")
             lbl.bind("<Button-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx))
             lbl.bind("<Double-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx, open_editor=True))
+            lbl.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
             self.employee_header_labels.append(lbl)
 
         for row_idx, (key, title, is_money) in enumerate(item_defs, start=1):
-            ttk.Label(self.matrix_frame, text=title, anchor="w", relief="solid", padding=4).grid(
+            title_lbl = ttk.Label(self.matrix_frame, text=title, anchor="w", relief="solid", padding=4)
+            title_lbl.grid(
                 row=row_idx, column=0, sticky="nsew"
             )
+            title_lbl.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
 
             line_widgets = []
             for col_idx, row in enumerate(self.rows_data, start=1):
@@ -170,11 +185,19 @@ class BonusBatchDialog(tk.Toplevel):
                 lbl.grid(row=row_idx, column=col_idx, sticky="nsew")
                 lbl.bind("<Button-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx))
                 lbl.bind("<Double-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx, open_editor=True))
+                lbl.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
                 line_widgets.append(lbl)
 
             self.employee_value_widgets.append(line_widgets)
 
         self._apply_selection_highlight()
+        self.matrix_frame.update_idletasks()
+        self.canvas.itemconfigure(
+            self.canvas_window,
+            width=max(self.canvas.winfo_width(), self.matrix_frame.winfo_reqwidth()),
+            height=max(self.canvas.winfo_height(), self.matrix_frame.winfo_reqheight()),
+        )
+        self._on_matrix_configure()
 
     def _apply_selection_highlight(self):
         for idx, lbl in enumerate(self.employee_header_labels):

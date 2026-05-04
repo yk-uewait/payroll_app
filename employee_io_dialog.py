@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import db
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 
 class EmployeeIODialog(tk.Toplevel):
@@ -35,6 +35,7 @@ class EmployeeIODialog(tk.Toplevel):
                 ttk.Label(frm, text=description).grid(row=row_idx, column=1, sticky="w", pady=6)
 
         self.bind("<Escape>", lambda e: self.close())
+        enable_enter_key_navigation(self)
         center_window(self, parent)
         self.after(10, self.focus_force)
 

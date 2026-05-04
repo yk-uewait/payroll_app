@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 
 class EmployeeEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, employee_id: int, on_saved=None):
@@ -31,6 +31,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_tax_type = tk.StringVar(value="甲")
         self.var_dependents = tk.IntVar(value=0)
         self.var_pref = tk.StringVar()
+        self.var_address_city = tk.StringVar()
+        self.var_address_detail = tk.StringVar()
         self.var_birth_y = tk.StringVar()
         self.var_birth_m = tk.StringVar()
         self.var_birth_d = tk.StringVar()
@@ -82,7 +84,7 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Entry(frm, textvariable=self.var_dependents, width=6, justify="right")\
             .grid(row=2, column=3, sticky="w", padx=5, pady=5)        
 
-        ttk.Label(frm, text="役職").grid(row=8, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="役職").grid(row=9, column=0, sticky="w", padx=5, pady=5)
         self.cmb_position = ttk.Combobox(
             frm,
             textvariable=self.var_position_id,
@@ -90,9 +92,9 @@ class EmployeeEditorDialog(tk.Toplevel):
             width=18,
             state="readonly",
         )
-        self.cmb_position.grid(row=8, column=1, sticky="w", padx=5, pady=5)
+        self.cmb_position.grid(row=9, column=1, sticky="w", padx=5, pady=5)
 
-        ttk.Label(frm, text="雇用区分").grid(row=8, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="雇用区分").grid(row=9, column=2, sticky="w", padx=5, pady=5)
         self.cmb_employment_type = ttk.Combobox(
             frm,
             textvariable=self.var_employment_type_id,
@@ -100,7 +102,7 @@ class EmployeeEditorDialog(tk.Toplevel):
             width=18,
             state="readonly",
         )
-        self.cmb_employment_type.grid(row=8, column=3, sticky="w", padx=5, pady=5)
+        self.cmb_employment_type.grid(row=9, column=3, sticky="w", padx=5, pady=5)
 
         ttk.Label(frm, text="標準報酬月額（健保）").grid(row=3, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(frm, textvariable=self.var_std_health, width=20, justify="right")\
@@ -129,9 +131,15 @@ class EmployeeEditorDialog(tk.Toplevel):
             state="readonly"
         ).grid(row=4, column=1, sticky="w", padx=5, pady=5)
 
-        ttk.Label(frm, text="生年月日").grid(row=4, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="市区町村").grid(row=4, column=2, sticky="w", padx=5, pady=5)
+        ttk.Entry(frm, textvariable=self.var_address_city, width=20).grid(row=4, column=3, sticky="w", padx=5, pady=5)
+
+        ttk.Label(frm, text="それ以降の住所").grid(row=5, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(frm, textvariable=self.var_address_detail, width=52).grid(row=5, column=1, columnspan=3, sticky="ew", padx=5, pady=5)
+
+        ttk.Label(frm, text="生年月日").grid(row=6, column=0, sticky="w", padx=5, pady=5)
         birth_frm = ttk.Frame(frm)
-        birth_frm.grid(row=4, column=3, sticky="w", padx=5, pady=5)
+        birth_frm.grid(row=6, column=1, sticky="w", padx=5, pady=5)
         ttk.Entry(birth_frm, textvariable=self.var_birth_y, width=6, justify="right").pack(side="left")
         ttk.Label(birth_frm, text="年").pack(side="left", padx=(2, 8))
         ttk.Entry(birth_frm, textvariable=self.var_birth_m, width=4, justify="right").pack(side="left")
@@ -139,9 +147,9 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Entry(birth_frm, textvariable=self.var_birth_d, width=4, justify="right").pack(side="left")
         ttk.Label(birth_frm, text="日").pack(side="left", padx=(2, 0))
 
-        ttk.Label(frm, text="入社日").grid(row=5, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="入社日").grid(row=7, column=0, sticky="w", padx=5, pady=5)
         hire_frm = ttk.Frame(frm)
-        hire_frm.grid(row=5, column=1, sticky="w", padx=5, pady=5)
+        hire_frm.grid(row=7, column=1, sticky="w", padx=5, pady=5)
         ttk.Entry(hire_frm, textvariable=self.var_hire_y, width=6, justify="right").pack(side="left")
         ttk.Label(hire_frm, text="年").pack(side="left", padx=(2, 8))
         ttk.Entry(hire_frm, textvariable=self.var_hire_m, width=4, justify="right").pack(side="left")
@@ -149,9 +157,9 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Entry(hire_frm, textvariable=self.var_hire_d, width=4, justify="right").pack(side="left")
         ttk.Label(hire_frm, text="日").pack(side="left", padx=(2, 0))
 
-        ttk.Label(frm, text="退職日").grid(row=5, column=2, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="退職日").grid(row=7, column=2, sticky="w", padx=5, pady=5)
         leave_frm = ttk.Frame(frm)
-        leave_frm.grid(row=5, column=3, sticky="w", padx=5, pady=5)
+        leave_frm.grid(row=7, column=3, sticky="w", padx=5, pady=5)
         ttk.Entry(leave_frm, textvariable=self.var_leave_y, width=6, justify="right").pack(side="left")
         ttk.Label(leave_frm, text="年").pack(side="left", padx=(2, 8))
         ttk.Entry(leave_frm, textvariable=self.var_leave_m, width=4, justify="right").pack(side="left")
@@ -161,13 +169,13 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Checkbutton(leave_frm, text="退職処理済み", variable=self.var_retirement_processed)\
             .pack(side="left", padx=(14, 0))
 
-        ttk.Label(frm, text="メモ").grid(row=6, column=0, sticky="nw", padx=5, pady=5)
+        ttk.Label(frm, text="メモ").grid(row=8, column=0, sticky="nw", padx=5, pady=5)
         self.txt_memo = tk.Text(frm, width=48, height=3, wrap="word")
-        self.txt_memo.grid(row=6, column=1, columnspan=3, sticky="ew", padx=5, pady=5)
+        self.txt_memo.grid(row=8, column=1, columnspan=3, sticky="ew", padx=5, pady=5)
 
         # ボタン
         btns = ttk.Frame(frm)
-        btns.grid(row=9, column=0, columnspan=4, sticky="e", padx=5, pady=(10, 0))
+        btns.grid(row=10, column=0, columnspan=4, sticky="e", padx=5, pady=(10, 0))
         ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
 
@@ -183,6 +191,7 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self.close())
 
         # フォーカス
+        enable_enter_key_navigation(self)
         center_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
@@ -277,6 +286,8 @@ class EmployeeEditorDialog(tk.Toplevel):
             """
             SELECT employee_id, employee_code, name_kanji, department, department_id, position_id, employment_type_id,
                    payday_group, payment_schedule_id, work_prefecture_name,
+                   COALESCE(address_city, '') AS address_city,
+                   COALESCE(address_detail, '') AS address_detail,
                    COALESCE(std_monthly_wage, 0) AS std_monthly_wage,
                    COALESCE(std_pension_wage, 0) AS std_pension_wage,
                    COALESCE(tax_type, '甲') AS tax_type,
@@ -319,6 +330,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_tax_type.set(r["tax_type"] or "甲")
         self.var_dependents.set(int(r["dependents_count"] or 0))
         self.var_pref.set(r["work_prefecture_name"] or "")
+        self.var_address_city.set(r["address_city"] or "")
+        self.var_address_detail.set(r["address_detail"] or "")
         self._split_date_to_vars(r["birth_date"], self.var_birth_y, self.var_birth_m, self.var_birth_d)
         self._split_date_to_vars(r["hire_date"], self.var_hire_y, self.var_hire_m, self.var_hire_d)
         self._split_date_to_vars(r["leave_date"], self.var_leave_y, self.var_leave_m, self.var_leave_d)
@@ -341,6 +354,8 @@ class EmployeeEditorDialog(tk.Toplevel):
             tax_type = self.var_tax_type.get().strip() or "甲"
             deps = int(self.var_dependents.get() or 0)
             pref = self.var_pref.get().strip()
+            address_city = self.var_address_city.get().strip()
+            address_detail = self.var_address_detail.get().strip()
             birth = self._build_date_from_vars(self.var_birth_y, self.var_birth_m, self.var_birth_d)
             hire_date = self._build_date_from_vars(self.var_hire_y, self.var_hire_m, self.var_hire_d)
             leave_date = self._build_date_from_vars(self.var_leave_y, self.var_leave_m, self.var_leave_d)
@@ -397,6 +412,8 @@ class EmployeeEditorDialog(tk.Toplevel):
             code, name, dept, 0,
             std_health, std_pension,
             tax_type, deps, pref,
+            address_city,
+            address_detail,
             birth,
             payment_schedule_id,
             hire_date,
@@ -421,8 +438,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.destroy()
 
 class EmployeesFrame(ttk.Frame):
-    COLUMNS = ("id", "code", "name", "dept", "pref", "payday", "birth_date", "tax_type", "deps", "memo")
-    DISPLAY_COLUMNS = ("code", "name", "dept", "pref", "payday", "birth_date", "tax_type", "deps", "memo")
+    COLUMNS = ("id", "code", "name", "dept", "pref", "city", "address", "payday", "birth_date", "tax_type", "deps", "memo")
+    DISPLAY_COLUMNS = ("code", "name", "dept", "pref", "city", "address", "payday", "birth_date", "tax_type", "deps", "memo")
 
     def __init__(self, master, conn):
         super().__init__(master)
@@ -445,6 +462,7 @@ class EmployeesFrame(ttk.Frame):
 
         self.notebook.bind("<<NotebookTabChanged>>", lambda e: self._clear_tab_selection())
         self.refresh()
+        enable_enter_key_navigation(self)
 
     def _build_tree_tab(self, tab_key: str, label: str):
         frame = ttk.Frame(self.notebook)
@@ -464,6 +482,8 @@ class EmployeesFrame(ttk.Frame):
             ("name", "氏名", 96),
             ("dept", "部署", 96),
             ("pref", "都道府県", 84),
+            ("city", "市区町村", 110),
+            ("address", "住所", 180),
             ("payday", "給与支給方式", 116),
             ("birth_date", "生年月日", 150),
             ("tax_type", "源泉", 54),
@@ -497,6 +517,8 @@ class EmployeesFrame(ttk.Frame):
                     r["name_kanji"],
                     r["department"],
                     r["work_prefecture_name"] if "work_prefecture_name" in r.keys() else "",
+                    r["address_city"] if "address_city" in r.keys() else "",
+                    r["address_detail"] if "address_detail" in r.keys() else "",
                     db.get_employee_payment_schedule_display(r, self.conn),
                     self._format_birth_date(r["birth_date"] if "birth_date" in r.keys() else ""),
                     r["tax_type"] if "tax_type" in r.keys() else "甲",

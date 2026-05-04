@@ -9,6 +9,7 @@ import db
 from utils_dates import parse_month, compute_pay_date
 
 from payroll_batch_dialog import PayrollBatchDialog
+from ui_window_utils import enable_enter_key_navigation
 
 class PayrollFrame(ttk.Frame):
     def _format_target_month_label(self, ym: str) -> str:
@@ -116,14 +117,24 @@ class PayrollFrame(ttk.Frame):
             self.tree.column(c, width=w, anchor=anchor)
 
         self.tree.bind("<Double-1>", lambda e: self.open_selected_batch())
+        self.tree.bind("<Shift-MouseWheel>", self._on_tree_shift_mousewheel)
  
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="支給控除一覧表Excel（縦）", command=self.export_pay_deduct_month).pack(side="left", padx=5)
         ttk.Button(btns, text="賃金台帳Excel（年次・個人別）", command=self.export_wage_ledger_year).pack(side="left", padx=5)
+        ttk.Button(btns, text="閉じる", command=self._close_window).pack(side="right", padx=5)
 
         self._load_years()
         self.refresh()
+        enable_enter_key_navigation(self)
+
+    def _close_window(self):
+        self.winfo_toplevel().destroy()
+
+    def _on_tree_shift_mousewheel(self, event):
+        self.tree.xview_scroll(int(-10 * (event.delta / 120)), "units")
+        return "break"
 
     def _load_years(self):
         cur = self.conn.cursor()

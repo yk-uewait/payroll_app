@@ -7,6 +7,31 @@ from typing import Any
 APP_DIR = Path(__file__).resolve().parent
 SETTINGS_PATH = APP_DIR / "settings.json"
 
+WINDOW_SIZE_PRESETS = {
+    "small": {
+        "label": "小",
+        "main": "1100x520+40+20",
+        "payroll_batch": "1280x600",
+        "payroll_editor": "900x620",
+    },
+    "medium": {
+        "label": "中",
+        "main": "1100x585+40+20",
+        "payroll_batch": "1360x660",
+        "payroll_editor": "900x680",
+    },
+    "large": {
+        "label": "大",
+        "main": "1100x650+40+20",
+        "payroll_batch": "1500x760",
+        "payroll_editor": "900x750",
+    },
+}
+
+WINDOW_SIZE_LABEL_TO_KEY = {
+    data["label"]: key for key, data in WINDOW_SIZE_PRESETS.items()
+}
+
 
 def load_settings() -> dict[str, Any]:
     """
@@ -37,6 +62,20 @@ def set_setting(key: str, value: Any) -> None:
     settings = load_settings()
     settings[key] = value
     save_settings(settings)
+
+
+def get_window_size_key() -> str:
+    key = str(get_setting("window_size", "small") or "small")
+    return key if key in WINDOW_SIZE_PRESETS else "small"
+
+
+def get_window_geometry(window_name: str) -> str:
+    key = get_window_size_key()
+    return WINDOW_SIZE_PRESETS[key][window_name]
+
+
+def set_window_size_by_label(label: str) -> None:
+    set_setting("window_size", WINDOW_SIZE_LABEL_TO_KEY.get(label, "small"))
 
 
 def get_resources_dir_fallback(db_dir: Path) -> Path:

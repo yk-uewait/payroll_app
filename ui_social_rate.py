@@ -4,7 +4,7 @@ import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from ui_window_utils import center_window
+from ui_window_utils import center_window, enable_enter_key_navigation
 from utils_rates import parse_percent_to_rate, format_rate_to_percent_text
 
 
@@ -135,6 +135,7 @@ class SocialRateEditorDialog(tk.Toplevel):
 
         self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
+        enable_enter_key_navigation(self)
         center_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
@@ -289,6 +290,7 @@ class SocialRateDialog(tk.Toplevel):
         ttk.Button(btns, text="閉じる", command=self.destroy).pack(side="right", padx=5)
 
         self.refresh()
+        enable_enter_key_navigation(self)
         center_window(self, master)
 
     def refresh(self):
