@@ -9,7 +9,63 @@ import db
 from utils_dates import parse_month, compute_pay_date
 
 from payroll_batch_dialog import PayrollBatchDialog
-from ui_window_utils import enable_enter_key_navigation
+from ui_window_utils import center_window, enable_enter_key_navigation
+
+
+class WageLedgerExportOptionsDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.result = None
+
+        self.title("賃金台帳(.xlsx)")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.var_year = tk.StringVar(value=str(date.today().year))
+        self.var_basis = tk.StringVar(value="target")
+
+        frm = ttk.Frame(self, padding=14)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="対象年").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frm, textvariable=self.var_year, width=10).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        basis = ttk.LabelFrame(frm, text="出力基準")
+        basis.grid(row=1, column=0, columnspan=2, padx=5, pady=(8, 5), sticky="ew")
+        ttk.Radiobutton(basis, text="対象月", value="target", variable=self.var_basis).pack(anchor="w", padx=8, pady=4)
+        ttk.Radiobutton(basis, text="支払日", value="paydate", variable=self.var_basis).pack(anchor="w", padx=8, pady=4)
+
+        footer = ttk.Frame(frm)
+        footer.grid(row=2, column=0, columnspan=2, sticky="e", padx=5, pady=(10, 0))
+        ttk.Button(footer, text="OK", command=self.apply).pack(side="right", padx=(6, 0))
+        ttk.Button(footer, text="キャンセル", command=self.cancel).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.bind("<Escape>", lambda event: self.cancel())
+        enable_enter_key_navigation(self)
+        center_window(self, parent)
+        self.after(10, self.focus_force)
+
+    def apply(self):
+        year_text = (self.var_year.get() or "").strip()
+        if not year_text.isdigit() or len(year_text) != 4:
+            messagebox.showerror("入力エラー", "対象年はyyyy（例：2026）で入力してください。", parent=self)
+            return
+        self.result = (int(year_text), self.var_basis.get())
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+    def cancel(self):
+        self.result = None
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
 
 class PayrollFrame(ttk.Frame):
     def _format_target_month_label(self, ym: str) -> str:
@@ -34,7 +90,7 @@ class PayrollFrame(ttk.Frame):
         self._sort_state = {}
         self._batch_rows_raw = []
 
-        top = ttk.LabelFrame(self, text="月次給与")
+        top = ttk.LabelFrame(self, text="給与")
         top.pack(fill="x", padx=10, pady=10)
 
         self.var_display_basis = tk.StringVar(value="対象年月")
@@ -121,8 +177,6 @@ class PayrollFrame(ttk.Frame):
  
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btns, text="支給控除一覧表Excel（縦）", command=self.export_pay_deduct_month).pack(side="left", padx=5)
-        ttk.Button(btns, text="賃金台帳Excel（年次・個人別）", command=self.export_wage_ledger_year).pack(side="left", padx=5)
         ttk.Button(btns, text="閉じる", command=self._close_window).pack(side="right", padx=5)
 
         self._load_years()
@@ -150,15 +204,15 @@ class PayrollFrame(ttk.Frame):
         self.cmb_year["values"] = years
         self.var_year.set(years[0])
 
-    def _get_target_month(self) -> str:
+    def _get_target_month(self, dialog_title: str = "対象年月") -> str:
         initial_year = (self.var_year.get() or "").strip()
         if not initial_year.isdigit():
             initial_year = str(date.today().year)
         initial_value = f"{initial_year}-{date.today().month:02d}"
 
         s = simpledialog.askstring(
-            "対象年月",
-            "対象年月を YYYY-MM 形式で入力してください。",
+            dialog_title,
+            "対象年月を yyyy-mm 形式で入力してください。",
             initialvalue=initial_value,
             parent=self,
         )
@@ -394,14 +448,14 @@ class PayrollFrame(ttk.Frame):
 
     def export_pay_deduct_month(self):
         try:
-            m = self._get_target_month()
+            m = self._get_target_month("支給控除一覧(.xlsx)")
         except Exception as e:
             messagebox.showerror("入力エラー", str(e))            
             return
 
         default_name = f"支給控除一覧_{m}.xlsx"
         path = filedialog.asksaveasfilename(
-            title="支給控除一覧表（Excel）保存先",
+            title="支給控除一覧(.xlsx)",
             defaultextension=".xlsx",
             initialfile=default_name,
             filetypes=[("Excel", "*.xlsx")],
@@ -418,16 +472,14 @@ class PayrollFrame(ttk.Frame):
         messagebox.showinfo("完了", f"出力しました。\n{path}")
 
     def export_wage_ledger_year(self):
-        s = simpledialog.askstring("賃金台帳（年次）", "対象年（YYYY）を入力してください。例：2026")
-        if s is None:
-            return
-        s = s.strip()
-        if not s.isdigit() or len(s) != 4:
-            messagebox.showerror("入力エラー", "対象年はYYYY（例：2026）で入力してください。")
+        dlg = WageLedgerExportOptionsDialog(self)
+        self.wait_window(dlg)
+        if not dlg.result:
             return
 
-        year = int(s)
-        default_name = f"賃金台帳_{year}.xlsx"
+        year, basis = dlg.result
+        basis_label = "対象月" if basis == "target" else "支払日"
+        default_name = f"賃金台帳_{year}_{basis_label}.xlsx"
         path = filedialog.asksaveasfilename(
             title="賃金台帳（年次・個人別）保存先",
             defaultextension=".xlsx",
@@ -438,7 +490,7 @@ class PayrollFrame(ttk.Frame):
             return
 
         try:
-            db.export_wage_ledger_year(self.conn, year, path)
+            db.export_wage_ledger_year(self.conn, year, path, basis=basis)
         except Exception as e:
             messagebox.showerror("エラー", f"出力に失敗しました。\n詳細: {e}")
             return

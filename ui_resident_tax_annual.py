@@ -26,7 +26,7 @@ def _parse_month(value: str) -> tuple[int, int]:
     text = (value or "").strip()
     parts = text.split("-")
     if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-        raise ValueError("年月は YYYY-MM 形式で入力してください。")
+        raise ValueError("年月は yyyy-mm 形式で入力してください。")
     year = int(parts[0])
     month = int(parts[1])
     if month < 1 or month > 12:
@@ -92,7 +92,7 @@ class ResidentTaxAnnualFrame(ttk.Frame):
 
         ttk.Button(top, text="表示", command=self.load).grid(row=0, column=6, padx=5, pady=5)
         ttk.Button(top, text="保存", command=self.save).grid(row=0, column=7, padx=5, pady=5)
-        ttk.Button(top, text="月次給与へ反映", command=self.apply_to_monthly).grid(row=0, column=8, padx=5, pady=5)
+        ttk.Button(top, text="給与へ反映", command=self.apply_to_monthly).grid(row=0, column=8, padx=5, pady=5)
 
         helper = ttk.LabelFrame(self, text="入力補助")
         helper.pack(fill="x", padx=10, pady=(0, 10))
@@ -402,4 +402,4 @@ class ResidentTaxAnnualFrame(ttk.Frame):
             messagebox.showinfo("確認", "対象期間を表示してください。")
             return
         db.apply_resident_tax_auto_for_period(self.conn, self.months[0], self.months[-1])
-        messagebox.showinfo("反映完了", "対象期間の月次給与へ住民税を反映しました。")
+        messagebox.showinfo("反映完了", "対象期間の給与へ住民税を反映しました。")

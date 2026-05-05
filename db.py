@@ -205,8 +205,8 @@ def round_down(value: float) -> int:
 
 def get_age_on_date(birth_date_str: str | None, target_date_str: str) -> int | None:
     """
-    birth_date_str: 'YYYY-MM-DD'
-    target_date_str: 'YYYY-MM' または 'YYYY-MM-DD'
+    birth_date_str: 'yyyy-mm-dd'
+    target_date_str: 'yyyy-mm' または 'yyyy-mm-dd'
     """
     if not birth_date_str:
         return None
@@ -1515,7 +1515,7 @@ def get_payroll_rows(conn, target_month: str):
 
 def get_payroll_batch_rows(conn, target_month: str):
     """
-    月次給与タブ用:
+    給与タブ用:
     対象月の payroll_monthly を、支払日(pay_date_applied)単位で集計して返す。
     """
     cur = conn.cursor()
@@ -3893,7 +3893,7 @@ def _health_care_display_amount(row) -> int:
     return health + care
 
 def _calc_gross_pay_from_payroll_row(row) -> int:
-    """月次給与1行から総支給額を計算する。"""
+    """給与1行から総支給額を計算する。"""
     return (
         int(row_get(row, "base_salary", 0) or 0)
         + int(row_get(row, "officer_pay", 0) or 0)
@@ -4061,7 +4061,7 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
     wb.save(file_path)
 
 
-def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str) -> None:
+def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis: str = "target") -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
@@ -4077,29 +4077,53 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str) -> Non
     emps = cur.fetchall()
 
     monthly_rows = []
-    for month in range(1, 13):
-        monthly_rows.extend(get_payroll_rows(conn, f"{year:04d}-{month:02d}"))
+    if basis == "paydate":
+        cur.execute(
+            """
+            SELECT p.*,
+                   e.employee_code,
+                   e.name_kanji,
+                   e.department,
+                   e.payment_schedule_id,
+                   e.std_monthly_wage,
+                   e.std_pension_wage,
+                   e.birth_date
+            FROM payroll_monthly p
+            JOIN employees e ON e.employee_id = p.employee_id
+            WHERE substr(p.pay_date_applied, 1, 4) = ?
+            ORDER BY p.pay_date_applied, p.target_month
+            """,
+            (str(year),),
+        )
+        monthly_rows = cur.fetchall()
+    else:
+        for month in range(1, 13):
+            monthly_rows.extend(get_payroll_rows(conn, f"{year:04d}-{month:02d}"))
+
     by_emp_month = {}
     for r in monthly_rows:
+        month_source = row_get(r, "pay_date_applied", "") if basis == "paydate" else row_get(r, "target_month", "")
         try:
-            mm = int(str(row_get(r, "target_month", "")).split("-")[1])
+            mm = int(str(month_source).split("-")[1])
         except Exception:
             continue
-        by_emp_month[(int(row_get(r, "employee_id", 0) or 0), mm)] = r
+        by_emp_month.setdefault((int(row_get(r, "employee_id", 0) or 0), mm), []).append(r)
 
+    bonus_year_column = "pay_date" if basis == "paydate" else "target_month"
     cur.execute(
-        """
+        f"""
         SELECT *
         FROM payroll_bonus
-        WHERE substr(target_month, 1, 4) = ?
-        ORDER BY target_month, pay_date
+        WHERE substr({bonus_year_column}, 1, 4) = ?
+        ORDER BY {bonus_year_column}, pay_date
         """,
         (str(year),),
     )
     by_emp_bonus = {}
     for r in cur.fetchall():
+        bonus_month_source = row_get(r, "pay_date", "") if basis == "paydate" else row_get(r, "target_month", "")
         try:
-            mm = int(str(row_get(r, "target_month", "")).split("-")[1])
+            mm = int(str(bonus_month_source).split("-")[1])
         except Exception:
             mm = 0
         by_emp_bonus.setdefault(int(row_get(r, "employee_id", 0) or 0), []).append((mm, r))
@@ -4153,6 +4177,11 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str) -> Non
             data["net_pay"],
         ]
 
+    def monthly_values_for_rows(rows):
+        if not rows:
+            return [0] * (len(headers) - 1)
+        return sum_rows([monthly_values(r) for r in rows])
+
     def bonus_values(r):
         bonus_amount = int(row_get(r, "bonus_amount", 0) or 0)
         health_care = int(row_get(r, "health_ins_employee", 0) or 0) + int(row_get(r, "care_ins_employee", 0) or 0)
@@ -4205,7 +4234,7 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str) -> Non
         out_row = 4
         monthly_value_rows = []
         for mm in range(1, 13):
-            values = monthly_values(by_emp_month.get((emp_id, mm)))
+            values = monthly_values_for_rows(by_emp_month.get((emp_id, mm)))
             monthly_value_rows.append(values)
             write_row(ws, out_row, mm, values)
             out_row += 1
@@ -4236,8 +4265,8 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str) -> Non
     wb.save(file_path)
 
 
-def export_wage_ledger_year(conn, year: int, file_path: str) -> None:
-    return _export_wage_ledger_year_with_totals(conn, year, file_path)
+def export_wage_ledger_year(conn, year: int, file_path: str, basis: str = "target") -> None:
+    return _export_wage_ledger_year_with_totals(conn, year, file_path, basis=basis)
     """
     賃金台帳（年次）を社員ごとにシート分けしてExcel出力する。
     見せ方B:
@@ -4544,7 +4573,7 @@ def delete_bonus(conn, bonus_id: int):
 
 
 def _prev_month(ym: str) -> str:
-    # ym: YYYY-MM
+    # ym: yyyy-mm
     y, m = ym.split("-")
     y = int(y)
     m = int(m)
@@ -4937,7 +4966,7 @@ def is_enrolled_at_month_end(hire_date, leave_date, target_month: str) -> bool:
 
 def has_employment_insurance_in_wage_period(hire_date, leave_date, wage_period_start: str | None, wage_period_end: str | None) -> bool:
     """
-    雇用保険の月次給与控除判定（賃金対象期間基準）
+    雇用保険の給与控除判定（賃金対象期間基準）
     賃金期間と在職期間が1日でも重なれば、その給与では雇用保険料を控除する。
     """
     if not wage_period_start or not wage_period_end:

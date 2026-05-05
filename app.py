@@ -5,6 +5,7 @@ import sys
 
 import app_settings
 import db
+from employee_io_dialog import EmployeeIODialog
 from ui_payroll import PayrollFrame
 from ui_bonus import BonusFrame
 from ui_settings import SettingsFrame
@@ -21,6 +22,48 @@ def resource_path(relative_name: str) -> Path:
     return Path(__file__).parent / relative_name
 
 APP_TITLE = "給与計算アプリ（プロトタイプ）"
+
+
+def create_main_menubar(root):
+    menubar = tk.Menu(root)
+
+    file_menu = tk.Menu(menubar, tearoff=False)
+    import_menu = tk.Menu(file_menu, tearoff=False)
+    import_menu.add_command(label="社員データをインポート", command=root.open_employee_import)
+    import_menu.add_command(label="給与データをインポート(未実装)", state="disabled")
+    import_menu.add_command(label="住民税データをインポート(未実装)", state="disabled")
+    file_menu.add_cascade(label="インポート", menu=import_menu)
+
+    export_menu = tk.Menu(file_menu, tearoff=False)
+    export_menu.add_command(label="給与明細(.xlsx)", command=root.export_payroll_detail_excel)
+    export_menu.add_command(label="支給控除一覧(.xlsx)", command=root.export_pay_deduct_excel)
+    export_menu.add_command(label="賃金台帳(.xlsx)", command=root.export_monthly_payroll_excel)
+    file_menu.add_cascade(label="エクスポート", menu=export_menu)
+    file_menu.add_separator()
+    file_menu.add_command(label="終了", command=root.destroy)
+    menubar.add_cascade(label="ファイル", menu=file_menu)
+
+    view_menu = tk.Menu(menubar, tearoff=False)
+    view_menu.add_command(label="画面サイズ設定", command=root.open_window_size_settings)
+    menubar.add_cascade(label="表示", menu=view_menu)
+
+    payroll_menu = tk.Menu(menubar, tearoff=False)
+    payroll_menu.add_command(label="給与入力", command=root.open_monthly_input)
+    payroll_menu.add_command(label="給与一覧", command=root.open_monthly_payroll_list)
+    payroll_menu.add_command(label="住民税年次一括入力", command=root.open_resident_tax_annual)
+    menubar.add_cascade(label="給与", menu=payroll_menu)
+
+    bonus_menu = tk.Menu(menubar, tearoff=False)
+    bonus_menu.add_command(label="賞与入力", command=root.open_bonus_input)
+    bonus_menu.add_command(label="賞与一覧", command=root.open_bonus_list)
+    menubar.add_cascade(label="賞与", menu=bonus_menu)
+
+    help_menu = tk.Menu(menubar, tearoff=False)
+    help_menu.add_command(label="操作マニュアル(未実装)", state="disabled")
+    help_menu.add_command(label="バージョン情報", command=root.show_version_info)
+    menubar.add_cascade(label="ヘルプ", menu=help_menu)
+
+    root.config(menu=menubar)
 
 class DataFileChoiceDialog(tk.Toplevel):
     def __init__(self, parent):
@@ -87,6 +130,7 @@ class App(tk.Tk):
         if not db_path:
             self.destroy()
             return
+        self.db_path = db_path
 
         schema_path = resource_path("schema.sql")
 
@@ -95,12 +139,77 @@ class App(tk.Tk):
         self._remember_db_path(db_path)
 
         # UI layout
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True)
 
-        nb.add(PayrollFrame(nb, self.conn), text="月次給与")
-        nb.add(BonusFrame(nb, self.conn), text="賞与")
-        nb.add(SettingsFrame(nb, self.conn), text="各種設定")
+        self.payroll_frame = PayrollFrame(self.notebook, self.conn)
+        self.bonus_frame = BonusFrame(self.notebook, self.conn)
+        self.settings_frame = SettingsFrame(self.notebook, self.conn, show_window_size_button=False)
+
+        self.notebook.add(self.payroll_frame, text="給与")
+        self.notebook.add(self.bonus_frame, text="賞与")
+        self.notebook.add(self.settings_frame, text="各種設定")
+
+        create_main_menubar(self)
+
+    def open_employee_import(self):
+        dlg = EmployeeIODialog(self, self.conn)
+        self.wait_window(dlg)
+
+    def export_pay_deduct_excel(self):
+        self.payroll_frame.export_pay_deduct_month()
+
+    def export_monthly_payroll_excel(self):
+        self.payroll_frame.export_wage_ledger_year()
+
+    def export_payroll_detail_excel(self):
+        try:
+            target_month = self.payroll_frame._get_target_month("給与明細(.xlsx)")
+        except Exception as e:
+            messagebox.showerror("入力エラー", str(e), parent=self)
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="給与明細(.xlsx)",
+            defaultextension=".xlsx",
+            initialfile=f"給与明細_{target_month}.xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            parent=self,
+        )
+        if not path:
+            return
+
+        try:
+            db.export_wage_ledger_excel(self.conn, target_month, path)
+        except Exception as e:
+            messagebox.showerror("エラー", f"出力に失敗しました。\n詳細: {e}", parent=self)
+            return
+        messagebox.showinfo("完了", f"出力しました。\n{path}", parent=self)
+
+    def open_window_size_settings(self):
+        self.settings_frame.open_window_size_settings()
+
+    def open_monthly_input(self):
+        self.payroll_frame.open_selected_batch()
+
+    def open_monthly_payroll_list(self):
+        self.notebook.select(self.payroll_frame)
+
+    def open_bonus_input(self):
+        self.bonus_frame.add_bonus()
+
+    def open_bonus_list(self):
+        self.notebook.select(self.bonus_frame)
+
+    def open_resident_tax_annual(self):
+        self.settings_frame.open_resident_tax_annual()
+
+    def show_version_info(self):
+        messagebox.showinfo(
+            "バージョン情報",
+            f"アプリ名: {APP_TITLE}\nバージョン: プロトタイプ\nDBパス: {self.db_path}",
+            parent=self,
+        )
 
     def _initial_db_dir(self) -> str:
         last_dir = app_settings.get_setting("last_db_dir", "")

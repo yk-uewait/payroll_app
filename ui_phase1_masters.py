@@ -552,7 +552,7 @@ class EmployeeStandardValueDialog(tk.Toplevel):
             return
         start_month = self.var_start.get().strip()
         if len(start_month) != 7 or start_month[4] != "-":
-            messagebox.showerror("入力エラー", "開始月は YYYY-MM 形式で入力してください。", parent=self)
+            messagebox.showerror("入力エラー", "開始月は yyyy-mm 形式で入力してください。", parent=self)
             return
         try:
             amount = int((self.var_amount.get() or "0").replace(",", ""))

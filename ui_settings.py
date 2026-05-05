@@ -70,7 +70,7 @@ class WindowSizeSettingsDialog(tk.Toplevel):
 
 
 class SettingsFrame(ttk.Frame):
-    def __init__(self, master, conn):
+    def __init__(self, master, conn, show_window_size_button: bool = True):
         super().__init__(master)
         self.conn = conn
 
@@ -84,7 +84,6 @@ class SettingsFrame(ttk.Frame):
         btn_area.pack(anchor="nw")
 
         buttons = [
-            ("画面サイズ設定", self.open_window_size_settings),
             ("社員管理", self.open_employees),
             ("給与支給方式の設定", self.open_payment_schedules),
             ("雇用保険料率の設定", self.open_empins_rate),
@@ -97,6 +96,8 @@ class SettingsFrame(ttk.Frame):
             ("支給控除項目マスタ", self.open_payroll_items),
             ("社員別標準金額", self.open_employee_standard_values),
         ]
+        if show_window_size_button:
+            buttons.insert(0, ("画面サイズ設定", self.open_window_size_settings))
         buttons.append(("住民税年次一括入力", self.open_resident_tax_annual))
         for idx, (text, command) in enumerate(buttons):
             ttk.Button(btn_area, text=text, command=command, width=24).grid(

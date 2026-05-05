@@ -16,14 +16,14 @@ def _to_int(s: str) -> int:
 
 class PayrollEditorDialog(tk.Toplevel):
     """
-    月次給与の入力値（支給・控除・自由枠属性）を編集するダイアログ
+    給与の入力値（支給・控除・自由枠属性）を編集するダイアログ
     """
     def __init__(self, master, conn, payroll_id: int, pay_free_names: list[str] | None = None, deduct_free_names: list[str] | None = None):
         super().__init__(master)
         self.conn = conn
         self.payroll_id = payroll_id
 
-        self.title("月次入力の編集")
+        self.title("給与入力の編集")
         self.geometry(app_settings.get_window_geometry("payroll_editor"))
         self.resizable(True, True)
         self.transient(master)

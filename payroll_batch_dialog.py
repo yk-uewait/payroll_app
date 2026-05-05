@@ -23,7 +23,7 @@ class PayrollBatchDialog(tk.Toplevel):
         self.employee_value_widgets = []
         self.output_data_by_payroll_id = {}
 
-        self.title(f"月次給与明細 {target_month} / 支払日 {pay_date_applied}")
+        self.title(f"給与明細 {target_month} / 支払日 {pay_date_applied}")
         self.geometry(app_settings.get_window_geometry("payroll_batch"))
         self.resizable(True, True)
         self.transient(master)
@@ -447,7 +447,7 @@ class PayrollBatchDialog(tk.Toplevel):
 
         override = simpledialog.askstring(
             "支払日上書き",
-            "上書きする支払日（YYYY-MM-DD）を入力。\n空欄を入力したい場合はキャンセル後に解除を選んでください。",
+            "上書きする支払日（yyyy-mm-dd）を入力。\n空欄を入力したい場合はキャンセル後に解除を選んでください。",
         )
         if override is None:
             return

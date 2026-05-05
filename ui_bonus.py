@@ -33,7 +33,7 @@ class BonusEditorDialog(tk.Toplevel):
         ttk.Label(frm, text="支払日").grid(row=1, column=0, sticky="w")
         self.var_pay_date = tk.StringVar(value="")
         ttk.Entry(frm, textvariable=self.var_pay_date, width=18).grid(row=1, column=1, sticky="w")
-        ttk.Label(frm, text="YYYY-MM-DD").grid(row=1, column=2, sticky="w")
+        ttk.Label(frm, text="yyyy-mm-dd").grid(row=1, column=2, sticky="w")
  
         # 社員選択（新規時のみ）
         self.emps = db.list_employees(conn)
@@ -91,10 +91,10 @@ class BonusEditorDialog(tk.Toplevel):
         s = (s or "").strip()
         parts = s.split("-")
         if len(parts) != 3:
-            raise ValueError("支払日は YYYY-MM-DD 形式で入力してください。")
+            raise ValueError("支払日は yyyy-mm-dd 形式で入力してください。")
         y, m, d = parts
         if not (y.isdigit() and m.isdigit() and d.isdigit()):
-            raise ValueError("支払日は YYYY-MM-DD 形式で入力してください。")
+            raise ValueError("支払日は yyyy-mm-dd 形式で入力してください。")
         return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
     def on_save(self):
@@ -257,11 +257,11 @@ class BonusFrame(ttk.Frame):
         s = (s or "").strip()
         parts = s.split("-")
         if len(parts) != 3:
-            raise ValueError("支払日は YYYY-MM-DD 形式で入力してください。")
+            raise ValueError("支払日は yyyy-mm-dd 形式で入力してください。")
 
         y, m, d = parts
         if not (y.isdigit() and m.isdigit() and d.isdigit()):
-            raise ValueError("支払日は YYYY-MM-DD 形式で入力してください。")
+            raise ValueError("支払日は yyyy-mm-dd 形式で入力してください。")
 
         y = int(y)
         m = int(m)
@@ -332,7 +332,7 @@ class BonusFrame(ttk.Frame):
 
         pay_date = simpledialog.askstring(
             "新規作成",
-            "支払日（YYYY-MM-DD）を入力してください。",
+            "支払日（yyyy-mm-dd）を入力してください。",
             initialvalue=f"{year_text}-{date.today().month:02d}-01",
             parent=self,
         )

@@ -388,7 +388,7 @@ class EmployeeEditorDialog(tk.Toplevel):
                 try:
                     datetime.strptime(value, "%Y-%m-%d")
                 except Exception:
-                    messagebox.showerror("入力エラー", f"{label}は YYYY-MM-DD 形式で入力してください。")
+                    messagebox.showerror("入力エラー", f"{label}は yyyy-mm-dd 形式で入力してください。")
                     return
 
         # 入社日・退職日の前後関係チェック
