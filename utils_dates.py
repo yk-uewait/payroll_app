@@ -7,7 +7,7 @@ import jpholiday
 
 @dataclass(frozen=True)
 class MonthInfo:
-    target_month: str         # YYYY-MM
+    target_month: str         # yyyy-mm
     start: date               # 1st
     end: date                 # last day
 
