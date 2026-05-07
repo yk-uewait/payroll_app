@@ -536,6 +536,8 @@ def upsert_named_master(conn, table: str, name: str, display_order: int = 0, is_
     if table not in {"departments", "positions", "employment_types"}:
         raise ValueError("invalid master table")
     if row_id is None:
+        if display_order is None:
+            display_order = get_next_display_order(conn, table)
         conn.execute(
             f"""
             INSERT INTO {table}(name, display_order, is_active, memo)
@@ -544,6 +546,9 @@ def upsert_named_master(conn, table: str, name: str, display_order: int = 0, is_
             (name, display_order, is_active, memo),
         )
     else:
+        if display_order is None:
+            current = conn.execute(f"SELECT display_order FROM {table} WHERE id=?", (row_id,)).fetchone()
+            display_order = int(row_get(current, "display_order", 0) or 0)
         conn.execute(
             f"""
             UPDATE {table}
@@ -553,6 +558,55 @@ def upsert_named_master(conn, table: str, name: str, display_order: int = 0, is_
             (name, display_order, is_active, memo, row_id),
         )
     conn.commit()
+
+def _validate_display_order_table(table: str) -> None:
+    if table not in {"departments", "positions", "employment_types", "payroll_item_categories", "payroll_items", "payroll_item_assignments"}:
+        raise ValueError("invalid display_order table")
+
+def get_next_display_order(conn, table: str) -> int:
+    _validate_display_order_table(table)
+    row = conn.execute(f"SELECT COALESCE(MAX(display_order), 0) AS max_order FROM {table}").fetchone()
+    return int(row_get(row, "max_order", 0) or 0) + 10
+
+def _display_order_rows(conn, table: str, include_inactive: bool = True):
+    _validate_display_order_table(table)
+    where = "" if include_inactive else "WHERE is_active = 1"
+    return conn.execute(
+        f"""
+        SELECT id, COALESCE(display_order, 0) AS display_order
+        FROM {table}
+        {where}
+        ORDER BY is_active DESC, COALESCE(display_order, 0) ASC, id ASC
+        """
+    ).fetchall()
+
+def normalize_display_order(conn, table: str, include_inactive: bool = True) -> None:
+    rows = _display_order_rows(conn, table, include_inactive)
+    for idx, row in enumerate(rows, start=1):
+        conn.execute(f"UPDATE {table} SET display_order=?, updated_at=datetime('now') WHERE id=?", (idx * 10, row["id"]))
+    conn.commit()
+
+def move_display_order(conn, table: str, row_id: int, direction: str, include_inactive: bool = True) -> bool:
+    if direction not in {"up", "down"}:
+        raise ValueError("direction must be up or down")
+    normalize_display_order(conn, table, include_inactive)
+    rows = _display_order_rows(conn, table, include_inactive)
+    ids = [int(row["id"]) for row in rows]
+    try:
+        idx = ids.index(int(row_id))
+    except ValueError:
+        return False
+
+    target_idx = idx - 1 if direction == "up" else idx + 1
+    if target_idx < 0 or target_idx >= len(rows):
+        return False
+
+    current = rows[idx]
+    target = rows[target_idx]
+    conn.execute(f"UPDATE {table} SET display_order=?, updated_at=datetime('now') WHERE id=?", (target["display_order"], current["id"]))
+    conn.execute(f"UPDATE {table} SET display_order=?, updated_at=datetime('now') WHERE id=?", (current["display_order"], target["id"]))
+    conn.commit()
+    return True
 
 def soft_delete_named_master(conn, table: str, row_id: int) -> bool:
     if table not in {"departments", "positions", "employment_types"}:
@@ -578,8 +632,45 @@ def list_payroll_item_categories(conn, include_inactive: bool = False):
     )
     return cur.fetchall()
 
-def upsert_payroll_item_category(conn, code, name, item_kind, display_order=0, is_active=1, memo=None, row_id=None):
+def _generate_unique_code(conn, table: str, prefix: str) -> str:
+    if table not in {"payroll_item_categories", "payroll_items"}:
+        raise ValueError("invalid code generation target")
+
+    rows = conn.execute(f"SELECT id, code FROM {table}").fetchall()
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
+    max_number = 0
+    existing = set()
+    for row in rows:
+        code = (row_get(row, "code", "") or "").strip()
+        if code:
+            existing.add(code)
+        match = pattern.match(code)
+        if match:
+            max_number = max(max_number, int(match.group(1)))
+        max_number = max(max_number, int(row_get(row, "id", 0) or 0))
+
+    number = max_number + 1
+    while True:
+        code = f"{prefix}_{number:06d}"
+        if code not in existing:
+            return code
+        number += 1
+
+def ensure_payroll_item_codes(conn) -> None:
+    for table, prefix in (("payroll_item_categories", "CAT"), ("payroll_items", "ITEM")):
+        rows = conn.execute(
+            f"SELECT id FROM {table} WHERE code IS NULL OR TRIM(code) = '' ORDER BY id"
+        ).fetchall()
+        for row in rows:
+            code = _generate_unique_code(conn, table, prefix)
+            conn.execute(f"UPDATE {table} SET code=?, updated_at=datetime('now') WHERE id=?", (code, row["id"]))
+    conn.commit()
+
+def upsert_payroll_item_category(conn, code=None, name="", item_kind="pay", display_order=0, is_active=1, memo=None, row_id=None):
     if row_id is None:
+        if display_order is None:
+            display_order = get_next_display_order(conn, "payroll_item_categories")
+        code = (code or "").strip() or _generate_unique_code(conn, "payroll_item_categories", "CAT")
         conn.execute(
             """
             INSERT INTO payroll_item_categories(code, name, item_kind, display_order, is_active, memo)
@@ -588,13 +679,16 @@ def upsert_payroll_item_category(conn, code, name, item_kind, display_order=0, i
             (code, name, item_kind, display_order, is_active, memo),
         )
     else:
+        if display_order is None:
+            current = conn.execute("SELECT display_order FROM payroll_item_categories WHERE id=?", (row_id,)).fetchone()
+            display_order = int(row_get(current, "display_order", 0) or 0)
         conn.execute(
             """
             UPDATE payroll_item_categories
-            SET code=?, name=?, item_kind=?, display_order=?, is_active=?, memo=?, updated_at=datetime('now')
+            SET name=?, item_kind=?, display_order=?, is_active=?, memo=?, updated_at=datetime('now')
             WHERE id=?
             """,
-            (code, name, item_kind, display_order, is_active, memo, row_id),
+            (name, item_kind, display_order, is_active, memo, row_id),
         )
     conn.commit()
 
@@ -609,19 +703,32 @@ def list_payroll_items(conn, include_inactive: bool = False):
     cur = conn.cursor()
     cur.execute(
         f"""
-        SELECT pi.*, c.name AS category_name, c.code AS category_code
+        SELECT pi.*, c.name AS category_name, c.code AS category_code,
+               COALESCE(c.display_order, 999999) AS category_display_order
         FROM payroll_items pi
         LEFT JOIN payroll_item_categories c ON c.id = pi.category_id
         {where}
-        ORDER BY pi.is_active DESC, pi.display_order ASC, pi.id ASC
+        ORDER BY pi.is_active DESC,
+                 CASE pi.item_kind
+                   WHEN 'pay' THEN 1
+                   WHEN 'deduction' THEN 2
+                   WHEN 'system_deduction' THEN 3
+                   ELSE 9
+                 END,
+                 COALESCE(c.display_order, 999999) ASC,
+                 pi.display_order ASC,
+                 pi.id ASC
         """
     )
     return cur.fetchall()
 
-def upsert_payroll_item(conn, code, name, item_kind, category_id=None, is_system=0, is_active=1,
+def upsert_payroll_item(conn, code=None, name="", item_kind="pay", category_id=None, is_system=0, is_active=1,
                         is_taxable=0, is_social_insurance_base=0, is_employment_insurance_base=0,
                         is_commute=0, display_order=0, memo=None, row_id=None):
     if row_id is None:
+        if display_order is None:
+            display_order = get_next_display_order(conn, "payroll_items")
+        code = (code or "").strip() or _generate_unique_code(conn, "payroll_items", "ITEM")
         conn.execute(
             """
             INSERT INTO payroll_items(
@@ -635,15 +742,18 @@ def upsert_payroll_item(conn, code, name, item_kind, category_id=None, is_system
              is_social_insurance_base, is_employment_insurance_base, is_commute, display_order, memo),
         )
     else:
+        if display_order is None:
+            current = conn.execute("SELECT display_order FROM payroll_items WHERE id=?", (row_id,)).fetchone()
+            display_order = int(row_get(current, "display_order", 0) or 0)
         conn.execute(
             """
             UPDATE payroll_items
-            SET code=?, name=?, item_kind=?, category_id=?, is_system=?, is_active=?, is_taxable=?,
+            SET name=?, item_kind=?, category_id=?, is_system=?, is_active=?, is_taxable=?,
                 is_social_insurance_base=?, is_employment_insurance_base=?, is_commute=?,
                 display_order=?, memo=?, updated_at=datetime('now')
             WHERE id=?
             """,
-            (code, name, item_kind, category_id, is_system, is_active, is_taxable,
+            (name, item_kind, category_id, is_system, is_active, is_taxable,
              is_social_insurance_base, is_employment_insurance_base, is_commute, display_order, memo, row_id),
         )
     conn.commit()
@@ -2398,6 +2508,7 @@ def ensure_schema_migrations(conn):
 
     seed_social_insurance_item_master(conn)
     seed_phase1_masters(conn)
+    ensure_payroll_item_codes(conn)
 
 
 def _get_db_dir(conn) -> Path:
@@ -3158,8 +3269,6 @@ def upsert_social_ins_rate(
     conn.commit()
 
 def list_social_ins_rates(conn):
-    return _aggregate_payroll_basis_rows(get_payroll_rows(conn, target_month), conn)
-
     cur = conn.cursor()
     cur.execute(
         """

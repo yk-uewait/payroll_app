@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 CLOSING_MODE_MAP = {
     "same_month": "当月",
@@ -17,6 +17,7 @@ def closing_mode_label(mode: str) -> str:
 class PaymentScheduleEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, payment_schedule_id=None, on_saved=None):
         super().__init__(parent)
+        self.withdraw()
         self.conn = conn
         self.payment_schedule_id = payment_schedule_id
         self.on_saved = on_saved
@@ -69,7 +70,7 @@ class PaymentScheduleEditorDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
     def load_schedule(self):

@@ -8,13 +8,14 @@ from datetime import date
 import db
 from utils_dates import parse_month
 from bonus_batch_dialog import BonusBatchDialog
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 class BonusEditorDialog(tk.Toplevel):
     """賞与 追加/編集（モーダル）"""
 
     def __init__(self, master, conn, target_month: str, bonus_row=None, initial_pay_date: str | None = None):
         super().__init__(master)
+        self.withdraw()
         self.conn = conn
         self.target_month = target_month
         self.bonus_row = bonus_row
@@ -76,9 +77,8 @@ class BonusEditorDialog(tk.Toplevel):
         ttk.Button(btns, text="保存", command=self.on_save).pack(side="right", padx=5)
         ttk.Button(btns, text="キャンセル", command=self.destroy).pack(side="right")
 
-        self.wait_visibility()
         enable_enter_key_navigation(self)
-        center_window(self, master)
+        show_centered_window(self, master)
         self.focus_set()
 
     def _to_int(self, s: str) -> int:

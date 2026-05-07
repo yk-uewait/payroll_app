@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import app_settings
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 def _to_int(s: str) -> int:
     s = (s or "").strip()
@@ -20,6 +20,7 @@ class PayrollEditorDialog(tk.Toplevel):
     """
     def __init__(self, master, conn, payroll_id: int, pay_free_names: list[str] | None = None, deduct_free_names: list[str] | None = None):
         super().__init__(master)
+        self.withdraw()
         self.conn = conn
         self.payroll_id = payroll_id
 
@@ -102,7 +103,7 @@ class PayrollEditorDialog(tk.Toplevel):
 
         self._update_dynamic_totals()
         enable_enter_key_navigation(self)
-        center_window(self, master)
+        show_centered_window(self, master)
 
     def _create_scrollable_tab(self, notebook, title: str):
         outer = ttk.Frame(notebook)

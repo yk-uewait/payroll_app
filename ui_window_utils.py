@@ -35,6 +35,16 @@ def center_window(window, parent=None):
     window.geometry(f"{width}x{height}+{x}+{y}")
 
 
+def show_centered_window(window, parent=None):
+    """Center a withdrawn Toplevel and show it after the position is fixed."""
+    center_window(window, parent)
+    try:
+        window.deiconify()
+        window.lift()
+    except tk.TclError:
+        pass
+
+
 def enable_enter_key_navigation(root_or_frame):
     """Enable Enter-to-next-field and Enter-to-invoke-button under a widget tree."""
 

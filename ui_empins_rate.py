@@ -4,7 +4,7 @@ import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 from utils_rates import parse_percent_to_rate, format_rate_to_percent_text
 
 
@@ -54,6 +54,7 @@ def _normalize_rate_text(var: tk.StringVar):
 class EmpInsRateEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, start_month=None, on_saved=None):
         super().__init__(parent)
+        self.withdraw()
         self.conn = conn
         self.start_month = start_month
         self.on_saved = on_saved
@@ -112,7 +113,7 @@ class EmpInsRateEditorDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
     def load_rate(self):
@@ -198,6 +199,7 @@ class EmpInsRateEditorDialog(tk.Toplevel):
 class EmpInsRateDialog(tk.Toplevel):
     def __init__(self, master, conn):
         super().__init__(master)
+        self.withdraw()
         self.conn = conn
         self.title("雇用保険料率登録・更新")
         self.geometry("650x325")
@@ -239,7 +241,7 @@ class EmpInsRateDialog(tk.Toplevel):
 
         self.refresh()
         enable_enter_key_navigation(self)
-        center_window(self, master)
+        show_centered_window(self, master)
 
     def refresh(self):
         for i in self.tree.get_children():

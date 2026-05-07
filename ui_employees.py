@@ -1,10 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 class EmployeeEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, employee_id: int, on_saved=None):
         super().__init__(parent)
+        self.withdraw()
         self.conn = conn
         self.employee_id = employee_id
         self.on_saved = on_saved
@@ -192,7 +193,7 @@ class EmployeeEditorDialog(tk.Toplevel):
 
         # フォーカス
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
     def load_payment_schedule_options(self):

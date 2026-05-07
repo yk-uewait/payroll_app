@@ -4,7 +4,7 @@ from tkinter import ttk, messagebox, simpledialog
 import db
 import app_settings
 from payroll_editor import PayrollEditorDialog
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 from utils_dates import compute_pay_date, parse_month
 
 
@@ -14,6 +14,7 @@ class PayrollBatchDialog(tk.Toplevel):
     """
     def __init__(self, master, conn, target_month: str, pay_date_applied: str):
         super().__init__(master)
+        self.withdraw()
         self.conn = conn
         self.target_month = target_month
         self.pay_date_applied = pay_date_applied
@@ -45,7 +46,7 @@ class PayrollBatchDialog(tk.Toplevel):
 
         self.refresh()
         enable_enter_key_navigation(self)
-        center_window(self, master)
+        show_centered_window(self, master)
 
     def _build_matrix_area(self):
         body = ttk.Frame(self)

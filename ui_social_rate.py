@@ -4,7 +4,7 @@ import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 from utils_rates import parse_percent_to_rate, format_rate_to_percent_text
 
 
@@ -78,6 +78,7 @@ def _rate_input(parent, row, label, var):
 class SocialRateEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, start_month=None, prefecture_name=None, on_saved=None):
         super().__init__(parent)
+        self.withdraw()
         self.conn = conn
         self.start_month = start_month
         self.prefecture_name = prefecture_name
@@ -100,33 +101,40 @@ class SocialRateEditorDialog(tk.Toplevel):
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill="both", expand=True)
 
-        ttk.Label(frm, text="適用開始月").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(
+            frm,
+            text="協会けんぽ等の保険料額表に記載された保険料率（％）をそのまま入力してください。",
+            justify="left",
+            wraplength=430,
+        ).grid(row=0, column=0, columnspan=2, padx=5, pady=(0, 8), sticky="w")
+
+        ttk.Label(frm, text="適用開始月").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         month_frm = ttk.Frame(frm)
-        month_frm.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        month_frm.grid(row=1, column=1, padx=5, pady=5, sticky="w")
         ttk.Entry(month_frm, textvariable=self.var_year, width=6, justify="right").pack(side="left")
         ttk.Label(month_frm, text="年").pack(side="left", padx=(2, 6))
         ttk.Entry(month_frm, textvariable=self.var_month, width=4, justify="right").pack(side="left")
         ttk.Label(month_frm, text="月").pack(side="left", padx=(2, 0))
 
-        ttk.Label(frm, text="都道府県").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frm, text="都道府県").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         ttk.Combobox(
             frm,
             textvariable=self.var_pref,
             values=PREFECTURES,
             width=14,
             state="readonly",
-        ).grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        ).grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
-        _rate_input(frm, 2, "健康保険(全体)", self.var_h)
-        _rate_input(frm, 3, "介護(全体)", self.var_c)
-        _rate_input(frm, 4, "子ども・子育て(全体)", self.var_child)
-        _rate_input(frm, 5, "厚年(全体)", self.var_p)
+        _rate_input(frm, 3, "健康保険(全体)", self.var_h)
+        _rate_input(frm, 4, "介護(全体)", self.var_c)
+        _rate_input(frm, 5, "子ども・子育て(全体)", self.var_child)
+        _rate_input(frm, 6, "厚年(全体)", self.var_p)
 
-        ttk.Label(frm, text="メモ").grid(row=6, column=0, padx=5, pady=5, sticky="w")
-        ttk.Entry(frm, textvariable=self.var_note, width=17).grid(row=6, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(frm, text="メモ").grid(row=7, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frm, textvariable=self.var_note, width=29).grid(row=7, column=1, padx=5, pady=5, sticky="w")
 
         btns = ttk.Frame(frm)
-        btns.grid(row=7, column=0, columnspan=2, sticky="e", padx=5, pady=(10, 0))
+        btns.grid(row=8, column=0, columnspan=2, sticky="e", padx=5, pady=(10, 0))
         ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
 
@@ -136,7 +144,7 @@ class SocialRateEditorDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, lambda: self.focus_force())
 
     def load_rate(self):
@@ -245,6 +253,7 @@ class SocialRateEditorDialog(tk.Toplevel):
 class SocialRateDialog(tk.Toplevel):
     def __init__(self, master, conn):
         super().__init__(master)
+        self.withdraw()
         self.conn = conn
         self.title("社会保険料率の設定")
         self.geometry("840x325")
@@ -291,7 +300,7 @@ class SocialRateDialog(tk.Toplevel):
 
         self.refresh()
         enable_enter_key_navigation(self)
-        center_window(self, master)
+        show_centered_window(self, master)
 
     def refresh(self):
         for i in self.tree.get_children():

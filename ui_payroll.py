@@ -9,12 +9,13 @@ import db
 from utils_dates import parse_month, compute_pay_date
 
 from payroll_batch_dialog import PayrollBatchDialog
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 
 class WageLedgerExportOptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
+        self.withdraw()
         self.result = None
 
         self.title("賃金台帳(.xlsx)")
@@ -44,7 +45,7 @@ class WageLedgerExportOptionsDialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.bind("<Escape>", lambda event: self.cancel())
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, self.focus_force)
 
     def apply(self):

@@ -9,7 +9,7 @@ from employee_io_dialog import EmployeeIODialog
 from ui_payroll import PayrollFrame
 from ui_bonus import BonusFrame
 from ui_settings import SettingsFrame
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 def resource_path(relative_name: str) -> Path:
     """
@@ -68,6 +68,7 @@ def create_main_menubar(root):
 class DataFileChoiceDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
+        self.withdraw()
         self.result = None
 
         self.title("データ選択")
@@ -99,7 +100,7 @@ class DataFileChoiceDialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Escape>", lambda e: self._cancel())
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, self.focus_force)
 
     def _choose(self, result):

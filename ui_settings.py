@@ -14,7 +14,7 @@ from ui_phase1_masters import (
 )
 from ui_resident_tax_annual import ResidentTaxAnnualFrame
 from ui_social_rate import SocialRateDialog
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 
 class FramePopupWindow(tk.Toplevel):
@@ -22,6 +22,7 @@ class FramePopupWindow(tk.Toplevel):
 
     def __init__(self, parent, title: str, frame_class, conn, geometry: str = "1100x700"):
         super().__init__(parent)
+        self.withdraw()
         self.conn = conn
         self.title(title)
         self.geometry(geometry)
@@ -33,12 +34,13 @@ class FramePopupWindow(tk.Toplevel):
         self.inner_frame = frame_class(container, conn)
         self.inner_frame.pack(fill="both", expand=True)
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
 
 
 class WindowSizeSettingsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
+        self.withdraw()
         self.title("画面サイズ設定")
         self.resizable(False, False)
         self.transient(parent)
@@ -61,7 +63,7 @@ class WindowSizeSettingsDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
 
     def apply(self):
         app_settings.set_window_size_by_label(self.var_size.get())
@@ -78,40 +80,79 @@ class SettingsFrame(ttk.Frame):
         outer.pack(fill="both", expand=True)
 
         ttk.Label(outer, text="各種設定", font=("", 14, "bold")).pack(anchor="w", pady=(0, 12))
-        ttk.Label(outer, text="マスタ・設定系の機能をここから開きます。").pack(anchor="w", pady=(0, 16))
+        ttk.Label(outer, text="アプリで使用する会社情報、組織、給与項目、税・保険関連の設定を行います。").pack(anchor="w", pady=(0, 12))
 
-        btn_area = ttk.Frame(outer)
-        btn_area.pack(anchor="nw")
+        list_area = ttk.LabelFrame(outer, text="設定項目", padding=8)
+        list_area.pack(fill="both", expand=True)
+        canvas = tk.Canvas(list_area, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_area, orient="vertical", command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_window = canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(canvas_window, width=e.width))
 
-        buttons = [
-            ("社員管理", self.open_employees),
-            ("給与支給方式の設定", self.open_payment_schedules),
-            ("雇用保険料率の設定", self.open_empins_rate),
-            ("社会保険料率の設定", self.open_social_rate),
-            ("会社設定", self.open_company_settings),
-            ("部署マスタ", self.open_departments),
-            ("役職マスタ", self.open_positions),
-            ("雇用区分マスタ", self.open_employment_types),
-            ("支給控除カテゴリマスタ", self.open_payroll_categories),
-            ("支給控除項目マスタ", self.open_payroll_items),
-            ("社員別標準金額", self.open_employee_standard_values),
-        ]
-        if show_window_size_button:
-            buttons.insert(0, ("画面サイズ設定", self.open_window_size_settings))
-        buttons.append(("住民税年次一括入力", self.open_resident_tax_annual))
-        for idx, (text, command) in enumerate(buttons):
-            ttk.Button(btn_area, text=text, command=command, width=24).grid(
-                row=idx // 2,
-                column=idx % 2,
-                padx=6,
-                pady=6,
-                sticky="w",
-            )
-        ttk.Frame(outer).pack(fill="both", expand=True)
+        self._add_section(scroll_frame, "会社・組織")
+        self._add_setting_row(scroll_frame, "会社設定", self.open_company_settings, "会社名、住所、電話番号など、帳票に表示する会社情報を設定します。")
+        self._add_setting_row(scroll_frame, "社員管理", self.open_employees, "社員番号、氏名、所属、給与支給方式など、給与計算に使う社員情報を管理します。")
+        self._add_setting_row(scroll_frame, "部署マスタ", self.open_departments, "社員に紐づける部署を設定します。給与項目の表示条件にも使用できます。")
+        self._add_setting_row(scroll_frame, "役職マスタ", self.open_positions, "社員に紐づける役職を設定します。役職ごとの手当表示などに使用できます。")
+        self._add_setting_row(scroll_frame, "雇用区分マスタ", self.open_employment_types, "役員、正社員、契約社員、パートなどの雇用区分を設定します。")
+
+        self._add_section(scroll_frame, "支給控除")
+        self._add_setting_row(scroll_frame, "給与支給方式の設定", self.open_payment_schedules, "当月払い、翌月払い、支給日など、社員に紐づける給与支給方式を設定します。")
+        self._add_setting_row(scroll_frame, "支給控除マスタ（大分類）", self.open_payroll_categories, "支給・控除項目をまとめる分類です。通常は初期設定のままで使用できます。")
+        self._add_setting_row(scroll_frame, "支給控除マスタ（中分類）", self.open_payroll_items, "給与明細や月次入力画面に表示する実際の支給・控除項目です。普段はこちらを使用します。")
+        self._add_setting_row(
+            scroll_frame,
+            "社員別標準金額設定",
+            self.open_employee_standard_values,
+            "社員ごとに基本給・通勤手当・手当などの標準額を設定します。\n特定社員に独自の金額を持たせたい場合に使用し、毎月の月次入力時に初期値として反映されます。",
+        )
+
+        self._add_section(scroll_frame, "税・保険・年次処理")
+        self._add_setting_row(scroll_frame, "雇用保険料率の設定", self.open_empins_rate, "給与計算で使用する雇用保険料率を設定します。")
+        self._add_setting_row(scroll_frame, "社会保険料率の設定", self.open_social_rate, "健康保険、介護保険、厚生年金などの社会保険料率を設定します。")
+        self._add_setting_row(scroll_frame, "住民税年次一括入力", self.open_resident_tax_annual, "年度ごとの住民税額を、社員一覧で12か月分まとめて入力します。")
+        self._bind_mousewheel(canvas, scroll_frame)
+
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(12, 0))
         ttk.Button(footer, text="閉じる", command=self._close_window).pack(side="right")
         enable_enter_key_navigation(self)
+
+    def _add_section(self, parent, title: str):
+        ttk.Label(parent, text=f"■ {title}", font=("", 11, "bold")).pack(anchor="w", pady=(12, 6))
+
+    def _add_setting_row(self, parent, text: str, command, description: str):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=3)
+        ttk.Button(row, text=text, command=command, width=26).pack(side="left", padx=(0, 14), anchor="n")
+        ttk.Label(row, text=description, wraplength=620, justify="left").pack(side="left", fill="x", expand=True, anchor="w")
+
+    def _bind_mousewheel(self, canvas, root_widget):
+        def on_mousewheel(event):
+            if event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+            else:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+
+        def bind_recursive(widget):
+            widget.bind("<MouseWheel>", on_mousewheel, add="+")
+            widget.bind("<Button-4>", on_mousewheel, add="+")
+            widget.bind("<Button-5>", on_mousewheel, add="+")
+            for child in widget.winfo_children():
+                bind_recursive(child)
+
+        bind_recursive(root_widget)
+        canvas.bind("<MouseWheel>", on_mousewheel, add="+")
+        canvas.bind("<Button-4>", on_mousewheel, add="+")
+        canvas.bind("<Button-5>", on_mousewheel, add="+")
 
     def _close_window(self):
         self.winfo_toplevel().destroy()
@@ -175,13 +216,13 @@ class SettingsFrame(ttk.Frame):
         win.focus()
 
     def open_payroll_categories(self):
-        win = FramePopupWindow(self, title="支給控除カテゴリマスタ", frame_class=PayrollCategoryFrame, conn=self.conn, geometry="820x440")
+        win = FramePopupWindow(self, title="支給控除マスタ（大分類）", frame_class=PayrollCategoryFrame, conn=self.conn, geometry="860x500")
         win.focus()
 
     def open_payroll_items(self):
-        win = FramePopupWindow(self, title="支給控除項目マスタ", frame_class=PayrollItemFrame, conn=self.conn, geometry="900x460")
+        win = FramePopupWindow(self, title="支給控除マスタ（中分類）", frame_class=PayrollItemFrame, conn=self.conn, geometry="980x500")
         win.focus()
 
     def open_employee_standard_values(self):
-        win = FramePopupWindow(self, title="社員別標準金額", frame_class=EmployeeStandardValueFrame, conn=self.conn, geometry="900x460")
+        win = FramePopupWindow(self, title="社員別標準金額設定", frame_class=EmployeeStandardValueFrame, conn=self.conn, geometry="900x460")
         win.focus()

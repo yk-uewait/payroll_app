@@ -3,12 +3,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import db
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 
 class BonusBatchDialog(tk.Toplevel):
     def __init__(self, master, conn, target_month: str, pay_date: str):
         super().__init__(master)
+        self.withdraw()
         self.conn = conn
         self.target_month = target_month
         self.pay_date = pay_date
@@ -40,7 +41,7 @@ class BonusBatchDialog(tk.Toplevel):
 
         self.refresh()
         enable_enter_key_navigation(self)
-        center_window(self, master)
+        show_centered_window(self, master)
 
     def _build_matrix_area(self):
         body = ttk.Frame(self)

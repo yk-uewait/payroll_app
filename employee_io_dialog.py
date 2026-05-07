@@ -3,12 +3,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import db
-from ui_window_utils import center_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 
 class EmployeeIODialog(tk.Toplevel):
     def __init__(self, parent, conn, on_completed=None):
         super().__init__(parent)
+        self.withdraw()
         self.conn = conn
         self.on_completed = on_completed
 
@@ -36,7 +37,7 @@ class EmployeeIODialog(tk.Toplevel):
 
         self.bind("<Escape>", lambda e: self.close())
         enable_enter_key_navigation(self)
-        center_window(self, parent)
+        show_centered_window(self, parent)
         self.after(10, self.focus_force)
 
     def _notify_completed(self):
