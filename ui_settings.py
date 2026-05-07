@@ -14,7 +14,7 @@ from ui_phase1_masters import (
 )
 from ui_resident_tax_annual import ResidentTaxAnnualFrame
 from ui_social_rate import SocialRateDialog
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import apply_safe_geometry, show_centered_window, enable_enter_key_navigation
 
 
 class FramePopupWindow(tk.Toplevel):
@@ -67,7 +67,7 @@ class WindowSizeSettingsDialog(tk.Toplevel):
 
     def apply(self):
         app_settings.set_window_size_by_label(self.var_size.get())
-        self.master.winfo_toplevel().geometry(app_settings.get_window_geometry("main"))
+        apply_safe_geometry(self.master.winfo_toplevel(), app_settings.get_window_geometry("main"))
         self.destroy()
 
 

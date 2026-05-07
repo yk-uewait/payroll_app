@@ -51,7 +51,7 @@ def _month_range(start_month: str, end_month: str) -> list[str]:
 
 
 class ResidentTaxAnnualFrame(ttk.Frame):
-    def __init__(self, master, conn):
+    def __init__(self, master, conn, initial_fiscal_year=None, focus_employee_id=None):
         super().__init__(master)
         self.conn = conn
         self.months = []
@@ -62,8 +62,9 @@ class ResidentTaxAnnualFrame(ttk.Frame):
         self.selected_employee_id = None
         self.sort_key = None
         self.sort_desc = False
+        self.focus_employee_id = int(focus_employee_id) if focus_employee_id is not None else None
 
-        current_year = date.today().year
+        current_year = int(initial_fiscal_year) if initial_fiscal_year is not None else date.today().year
         self.var_year = tk.StringVar(value=str(current_year))
         self.var_start_month = tk.StringVar(value=f"{current_year:04d}-06")
         self.var_end_month = tk.StringVar(value=f"{current_year + 1:04d}-05")
@@ -74,6 +75,8 @@ class ResidentTaxAnnualFrame(ttk.Frame):
         self._build_grid()
         self._build_footer()
         self.load()
+        if self.focus_employee_id is not None:
+            self.after_idle(lambda: self.focus_employee(self.focus_employee_id))
         enable_enter_key_navigation(self)
 
     def _build_controls(self):
@@ -361,6 +364,19 @@ class ResidentTaxAnnualFrame(ttk.Frame):
     def _select_employee(self, employee_id: int):
         self.selected_employee_id = employee_id
         self._refresh_selected_row()
+
+    def focus_employee(self, employee_id: int):
+        self._select_employee(employee_id)
+        widgets = self.row_widgets.get(employee_id) or []
+        if not widgets:
+            return
+        self.update_idletasks()
+        try:
+            y = widgets[0].winfo_y()
+            height = max(self.grid_frame.winfo_height(), 1)
+            self.canvas.yview_moveto(max(0, min(1, y / height)))
+        except tk.TclError:
+            pass
 
     def _expand_to_employee(self, employee_id: int, june_amount: int, rest_amount: int):
         if employee_id not in self.amount_vars:

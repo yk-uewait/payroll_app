@@ -2055,9 +2055,17 @@ def get_payroll_by_id(conn, payroll_id: int):
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT p.*, e.employee_code, e.name_kanji, e.department, e.payday_group
+        SELECT p.*,
+               e.employee_code,
+               e.name_kanji,
+               e.department,
+               e.payday_group,
+               COALESCE(pos.name, '') AS position_name,
+               COALESCE(emp_type.name, '') AS employment_type_name
         FROM payroll_monthly p
         JOIN employees e ON e.employee_id = p.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types emp_type ON emp_type.id = e.employment_type_id
         WHERE p.payroll_id=?
         """,
         (payroll_id,),

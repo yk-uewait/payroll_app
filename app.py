@@ -9,7 +9,7 @@ from employee_io_dialog import EmployeeIODialog
 from ui_payroll import PayrollFrame
 from ui_bonus import BonusFrame
 from ui_settings import SettingsFrame
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import apply_safe_geometry, show_centered_window, enable_enter_key_navigation
 
 def resource_path(relative_name: str) -> Path:
     """
@@ -123,7 +123,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry(app_settings.get_window_geometry("main"))
+        apply_safe_geometry(self, app_settings.get_window_geometry("main"))
 
         self.conn = None
 

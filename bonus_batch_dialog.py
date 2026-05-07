@@ -2,6 +2,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+import app_settings
 import db
 from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
@@ -19,7 +20,7 @@ class BonusBatchDialog(tk.Toplevel):
         self.employee_value_widgets = []
 
         self.title(f"賞与明細 {target_month} / 支給日 {pay_date}")
-        self.geometry("1450x760")
+        self.geometry(app_settings.get_window_geometry("bonus_batch"))
         self.resizable(True, True)
         self.transient(master)
         self.grab_set()

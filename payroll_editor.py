@@ -1,28 +1,159 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+
 import app_settings
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import apply_safe_geometry, show_centered_window, enable_enter_key_navigation
+
 
 def _to_int(s: str) -> int:
-    s = (s or "").strip()
-    if s == "":
+    text = (s or "").strip().replace(",", "")
+    if text == "":
         return 0
-    # カンマ入力も許可（例：100,000）
-    s = s.replace(",", "")
     try:
-        return int(s)
+        return int(text)
     except ValueError:
-        raise ValueError(f"数値として解釈できません: {s}")
+        raise ValueError(f"金額は整数で入力してください: {s}")
+
+
+def _format_amount(value) -> str:
+    try:
+        return f"{int(value or 0):,}"
+    except Exception:
+        return "0"
+
+
+def _remove_commas(var: tk.StringVar):
+    var.set((var.get() or "").replace(",", ""))
+
+
+def _format_amount_var(var: tk.StringVar, on_change=None):
+    try:
+        var.set(_format_amount(_to_int(var.get())))
+    except ValueError:
+        return
+    if callable(on_change):
+        on_change()
+
+
+def _resident_tax_fiscal_year(target_month: str) -> int:
+    year_text, month_text = str(target_month).split("-", 1)
+    year = int(year_text)
+    month = int(month_text)
+    return year if month >= 6 else year - 1
+
+
+class WithholdingOverrideDialog(tk.Toplevel):
+    def __init__(self, parent, conn, payroll_id: int, row, on_changed=None):
+        super().__init__(parent)
+        self.withdraw()
+        self.conn = conn
+        self.payroll_id = payroll_id
+        self.row = row
+        self.on_changed = on_changed
+
+        self.title("所得税 上書き")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.var_auto = tk.StringVar(value=_format_amount(row["withholding_tax_auto"] if "withholding_tax_auto" in row.keys() else 0))
+        override = row["withholding_tax_override"] if "withholding_tax_override" in row.keys() else None
+        self.var_override = tk.StringVar(value="" if override is None else _format_amount(override))
+        self.var_reason = tk.StringVar(
+            value=row["withholding_tax_override_reason"]
+            if "withholding_tax_override_reason" in row.keys() and row["withholding_tax_override_reason"]
+            else ""
+        )
+        self.var_applied = tk.StringVar(value=_format_amount(row["withholding_tax_applied"] if "withholding_tax_applied" in row.keys() else 0))
+
+        frm = ttk.Frame(self, padding=14)
+        frm.pack(fill="both", expand=True)
+
+        rows = [
+            ("自動計算額", self.var_auto, "readonly"),
+            ("上書き額", self.var_override, "normal"),
+            ("適用額", self.var_applied, "readonly"),
+        ]
+        for idx, (label, var, state) in enumerate(rows):
+            ttk.Label(frm, text=label).grid(row=idx, column=0, padx=5, pady=5, sticky="w")
+            ent = ttk.Entry(frm, textvariable=var, width=18, justify="right", state=state)
+            ent.grid(row=idx, column=1, padx=5, pady=5, sticky="w")
+            ttk.Label(frm, text="円").grid(row=idx, column=2, padx=5, pady=5, sticky="w")
+            if state == "normal":
+                self._bind_money_entry(ent, var)
+
+        ttk.Label(frm, text="上書き理由").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frm, textvariable=self.var_reason, width=36).grid(row=3, column=1, columnspan=2, padx=5, pady=5, sticky="w")
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=4, column=0, columnspan=3, padx=5, pady=(12, 0), sticky="e")
+        ttk.Button(btns, text="上書きを保存", command=self.save_override).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="上書きを解除", command=self.clear_override).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
+
+        self.bind("<Escape>", lambda event: self.close())
+        enable_enter_key_navigation(self)
+        show_centered_window(self, parent)
+        self.after(10, self.focus_force)
+
+    def _bind_money_entry(self, entry, var: tk.StringVar):
+        entry.bind("<FocusIn>", lambda event: ( _remove_commas(var), event.widget.select_range(0, "end") ))
+        entry.bind("<FocusOut>", lambda event: self._refresh_override_preview())
+        entry.bind("<KeyRelease>", lambda event: self._refresh_override_preview(format_input=False))
+
+    def _refresh_override_preview(self, format_input=True):
+        text = (self.var_override.get() or "").strip()
+        if text == "":
+            self.var_applied.set(self.var_auto.get())
+            return
+        try:
+            amount = _to_int(text)
+        except ValueError:
+            return
+        if format_input:
+            self.var_override.set(_format_amount(amount))
+        self.var_applied.set(_format_amount(amount))
+
+    def save_override(self):
+        try:
+            amount = _to_int(self.var_override.get())
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e), parent=self)
+            return
+
+        import db
+
+        db.override_withholding_tax(self.conn, self.payroll_id, amount, self.var_reason.get().strip() or None)
+        if callable(self.on_changed):
+            self.on_changed()
+        self.close()
+
+    def clear_override(self):
+        import db
+
+        db.override_withholding_tax(self.conn, self.payroll_id, None, None)
+        if callable(self.on_changed):
+            self.on_changed()
+        self.close()
+
+    def close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
 
 class PayrollEditorDialog(tk.Toplevel):
-    """
-    給与の入力値（支給・控除・自由枠属性）を編集するダイアログ
-    """
     def __init__(self, master, conn, payroll_id: int, pay_free_names: list[str] | None = None, deduct_free_names: list[str] | None = None):
         super().__init__(master)
         self.withdraw()
         self.conn = conn
         self.payroll_id = payroll_id
+        self.dynamic_item_vars = {}
+        self.dynamic_item_sources = {}
+        self.money_entries = []
+        self.scroll_canvases = []
 
         self.title("給与入力の編集")
         self.geometry(app_settings.get_window_geometry("payroll_editor"))
@@ -31,280 +162,131 @@ class PayrollEditorDialog(tk.Toplevel):
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
-        import db
-        self.row = db.get_payroll_by_id(conn, payroll_id)
+        self._load_row()
         if not self.row:
-            messagebox.showerror("エラー", "対象データが見つかりません。")
+            messagebox.showerror("エラー", "対象データが見つかりません。", parent=self)
             self.destroy()
             return
-        self.dynamic_item_vars = {}
-        self.dynamic_item_sources = {}
 
-        # 表示名（後でSettings化する。今回は暫定で固定）
-        self.pay_free_names = pay_free_names or [f"支給自由{i}" for i in range(1, 6)]
-        self.deduct_free_names = deduct_free_names or [f"控除自由{i}" for i in range(1, 6)]
+        self._build_header()
+        self._build_body()
+        self._build_note()
+        self._build_footer()
 
-        header = ttk.LabelFrame(self, text="対象")
-        header.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(header, text=f"社員番号: {self.row['employee_code']}").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(header, text=f"氏名: {self.row['name_kanji']}").grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        ttk.Label(header, text=f"部署: {self.row['department']}").grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        ttk.Label(header, text=f"対象月: {self.row['target_month']}").grid(row=0, column=3, padx=5, pady=5, sticky="w")
-
-        body = ttk.Frame(self)
-        body.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Notebookで「支給」「控除」「備考」
-        nb = ttk.Notebook(body)
-        nb.pack(fill="both", expand=True)
-
-        self._active_scroll_canvas = None
-        self.tab_pay = self._create_scrollable_tab(nb, "支給")
-        self.tab_deduct = self._create_scrollable_tab(nb, "控除")
-        self.tab_note = self._create_scrollable_tab(nb, "備考")
-
-        self._build_pay_tab()
-        self._build_deduct_tab()
-        self._build_note_tab()
-        self._bind_tab_scroll_events(self.tab_pay, self.tab_pay._scroll_canvas)
-        self._bind_tab_scroll_events(self.tab_deduct, self.tab_deduct._scroll_canvas)
-        self._bind_tab_scroll_events(self.tab_note, self.tab_note._scroll_canvas)
-
-        # 入力合計（ダイアログ下部に固定表示）
-        summary = ttk.LabelFrame(self, text="入力合計（税・社保はまだ）")
-        summary.pack(fill="x", padx=10, pady=(0, 10))
-
-        self.lbl_total_pay = ttk.Label(summary, text="総支給：0円")
-        self.lbl_total_deduct = ttk.Label(summary, text="控除合計：0円")
-        self.lbl_net = ttk.Label(summary, text="手取り：0円")
-        self.lbl_dynamic_pay = ttk.Label(summary, text="動的支給合計（参考）：0円")
-        self.lbl_dynamic_taxable = ttk.Label(summary, text="動的課税支給額（参考）：0円")
-        self.lbl_dynamic_nontax = ttk.Label(summary, text="動的非課税支給額（参考）：0円")
-        self.lbl_dynamic_emp_base = ttk.Label(summary, text="動的雇用保険対象額（参考）：0円")
-        self.lbl_dynamic_social_base = ttk.Label(summary, text="動的社会保険対象額（参考）：0円")
-        self.lbl_dynamic_custom_deduct = ttk.Label(summary, text="動的会社独自控除合計（参考）：0円")
-
-        self.lbl_total_pay.pack(anchor="w", padx=10, pady=2)
-        self.lbl_total_deduct.pack(anchor="w", padx=10, pady=2)
-        self.lbl_net.pack(anchor="w", padx=10, pady=2)
-        ttk.Separator(summary, orient="horizontal").pack(fill="x", padx=10, pady=4)
-        self.lbl_dynamic_pay.pack(anchor="w", padx=10, pady=1)
-        self.lbl_dynamic_taxable.pack(anchor="w", padx=10, pady=1)
-        self.lbl_dynamic_nontax.pack(anchor="w", padx=10, pady=1)
-        self.lbl_dynamic_emp_base.pack(anchor="w", padx=10, pady=1)
-        self.lbl_dynamic_social_base.pack(anchor="w", padx=10, pady=1)
-        self.lbl_dynamic_custom_deduct.pack(anchor="w", padx=10, pady=1)
-
-        footer = ttk.Frame(self)
-        footer.pack(fill="x", padx=10, pady=10)
-        ttk.Button(footer, text="保存", command=self.save).pack(side="right", padx=5)
-        ttk.Button(footer, text="キャンセル", command=self._close).pack(side="right", padx=5)
-
-        self._update_dynamic_totals()
+        self._update_totals()
         enable_enter_key_navigation(self)
         show_centered_window(self, master)
 
-    def _create_scrollable_tab(self, notebook, title: str):
-        outer = ttk.Frame(notebook)
-        notebook.add(outer, text=title)
-
-        canvas = tk.Canvas(outer, highlightthickness=0)
-        v_scroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        h_scroll = ttk.Scrollbar(outer, orient="horizontal", command=canvas.xview)
-        canvas.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
-
-        canvas.grid(row=0, column=0, sticky="nsew")
-        v_scroll.grid(row=0, column=1, sticky="ns")
-        h_scroll.grid(row=1, column=0, sticky="ew")
-        outer.grid_rowconfigure(0, weight=1)
-        outer.grid_columnconfigure(0, weight=1)
-
-        inner = ttk.Frame(canvas)
-        inner._scroll_canvas = canvas
-        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        def update_scrollregion(event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def resize_inner(event):
-            canvas.itemconfigure(
-                canvas_window,
-                width=max(event.width, inner.winfo_reqwidth()),
-                height=max(event.height, inner.winfo_reqheight()),
-            )
-            update_scrollregion()
-
-        inner.bind("<Configure>", update_scrollregion)
-        canvas.bind("<Configure>", resize_inner)
-
-        for widget in (outer, canvas, inner):
-            widget.bind("<Enter>", lambda event, c=canvas: self._activate_tab_scroll(c))
-            widget.bind("<Leave>", lambda event: self._deactivate_tab_scroll())
-
-        return inner
-
-    def _activate_tab_scroll(self, canvas):
-        self._active_scroll_canvas = canvas
-        self.bind_all("<MouseWheel>", self._on_tab_mousewheel)
-        self.bind_all("<Shift-MouseWheel>", self._on_tab_shift_mousewheel)
-        self.bind_all("<Button-4>", self._on_tab_mousewheel)
-        self.bind_all("<Button-5>", self._on_tab_mousewheel)
-
-    def _deactivate_tab_scroll(self):
-        self._active_scroll_canvas = None
-        self.unbind_all("<MouseWheel>")
-        self.unbind_all("<Shift-MouseWheel>")
-        self.unbind_all("<Button-4>")
-        self.unbind_all("<Button-5>")
-
-    def _close(self):
-        self._deactivate_tab_scroll()
-        self.destroy()
-
-    def _on_tab_mousewheel(self, event):
-        canvas = self._active_scroll_canvas
-        if canvas is None:
-            return
-        if getattr(event, "num", None) == 4:
-            canvas.yview_scroll(-3, "units")
-        elif getattr(event, "num", None) == 5:
-            canvas.yview_scroll(3, "units")
-        else:
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        return "break"
-
-    def _on_tab_shift_mousewheel(self, event):
-        canvas = self._active_scroll_canvas
-        if canvas is None:
-            return
-        canvas.xview_scroll(int(-10 * (event.delta / 120)), "units")
-        return "break"
-
-    def _bind_tab_scroll_events(self, widget, canvas):
-        widget.bind("<MouseWheel>", lambda event, c=canvas: self._scroll_canvas_y(c, event), add="+")
-        widget.bind("<Shift-MouseWheel>", lambda event, c=canvas: self._scroll_canvas_x(c, event), add="+")
-        widget.bind("<Button-4>", lambda event, c=canvas: self._scroll_canvas_y(c, event), add="+")
-        widget.bind("<Button-5>", lambda event, c=canvas: self._scroll_canvas_y(c, event), add="+")
-        for child in widget.winfo_children():
-            self._bind_tab_scroll_events(child, canvas)
-
-    def _scroll_canvas_y(self, canvas, event):
-        if getattr(event, "num", None) == 4:
-            canvas.yview_scroll(-3, "units")
-        elif getattr(event, "num", None) == 5:
-            canvas.yview_scroll(3, "units")
-        else:
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        return "break"
-
-    def _scroll_canvas_x(self, canvas, event):
-        canvas.xview_scroll(int(-10 * (event.delta / 120)), "units")
-        return "break"
-
-    def _build_pay_tab(self):
-        self.money_entries = []
-        frm = ttk.Frame(self.tab_pay)
-        frm.pack(fill="both", expand=True, padx=10, pady=10)
-        self.vars = {}
-        self._build_dynamic_items_section(frm, "pay")
-        return
-
-        # 固定支給
-        fixed = ttk.LabelFrame(frm, text="固定支給（確定金額を入力）")
-        fixed.pack(fill="x", pady=(0,10))
-
-        self.vars = {}  # まとめて保持
-
-        def add_money_row(parent, r, label, key):
-            ttk.Label(parent, text=label).grid(row=r, column=0, padx=5, pady=5, sticky="w")
-            v = tk.StringVar(value=str(self.row[key]))
-            ent = ttk.Entry(parent, textvariable=v, width=18)
-            ent.grid(row=r, column=1, padx=5, pady=5, sticky="w")
-            ent.bind("<KeyRelease>", self._update_totals)
-            self.money_entries.append(ent)
-            ttk.Label(parent, text="円").grid(row=r, column=2, padx=5, pady=5, sticky="w")
-            self.vars[key] = v
-
-        add_money_row(fixed, 0, "役員報酬", "officer_pay")
-        add_money_row(fixed, 1, "基本給", "base_salary")
-        add_money_row(fixed, 2, "みなし残業手当", "deemed_ot")
-        add_money_row(fixed, 3, "残業手当", "overtime_pay")
-        add_money_row(fixed, 4, "特別手当", "special_allow")
-        add_money_row(fixed, 5, "非課税交通費", "commute_nontax")
-
-        # 自由支給＋属性
-        free = ttk.LabelFrame(frm, text="自由支給（5枠）＋属性")
-        free.pack(fill="both", expand=True)
-
-        ttk.Label(free, text="項目").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(free, text="金額").grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        ttk.Label(free, text="課税").grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        ttk.Label(free, text="社保対象").grid(row=0, column=3, padx=5, pady=5, sticky="w")
-        ttk.Label(free, text="雇保対象").grid(row=0, column=4, padx=5, pady=5, sticky="w")
-
-        for i in range(1, 6):
-            name = self.pay_free_names[i-1]
-            key_amt = f"pay_free{i}"
-            key_tax = f"pay_free{i}_is_taxable"
-            key_soc = f"pay_free{i}_is_social_base"
-            key_emp = f"pay_free{i}_is_employment_base"
-
-            ttk.Label(free, text=name).grid(row=i, column=0, padx=5, pady=5, sticky="w")
-
-            v_amt = tk.StringVar(value=str(self.row[key_amt]))
-            ent = ttk.Entry(free, textvariable=v_amt, width=18)
-            ent.grid(row=i, column=1, padx=5, pady=5, sticky="w")
-            ent.bind("<KeyRelease>", self._update_totals)
-            self.money_entries.append(ent)
-            self.vars[key_amt] = v_amt
-
-
-            v_tax = tk.IntVar(value=int(self.row[key_tax]))
-            v_soc = tk.IntVar(value=int(self.row[key_soc]))
-            v_emp = tk.IntVar(value=int(self.row[key_emp]))
-            ttk.Checkbutton(free, variable=v_tax).grid(row=i, column=2, padx=5, pady=5, sticky="w")
-            ttk.Checkbutton(free, variable=v_soc).grid(row=i, column=3, padx=5, pady=5, sticky="w")
-            ttk.Checkbutton(free, variable=v_emp).grid(row=i, column=4, padx=5, pady=5, sticky="w")
-
-            self.vars[key_tax] = v_tax
-            self.vars[key_soc] = v_soc
-            self.vars[key_emp] = v_emp
-
-        # “よくある組合せ”ボタン（初心者向け）
-        preset = ttk.Frame(frm)
-        preset.pack(fill="x", pady=(10,0))
-        # 合計表示（入力ベース）
-        self._build_dynamic_items_section(frm, "pay")
-
-    def _apply_preset(self, taxable: bool, social: bool, emp: bool):
-        for i in range(1, 6):
-            self.vars[f"pay_free{i}_is_taxable"].set(1 if taxable else 0)
-            self.vars[f"pay_free{i}_is_social_base"].set(1 if social else 0)
-            self.vars[f"pay_free{i}_is_employment_base"].set(1 if emp else 0)
-
-    def _build_dynamic_items_section(self, parent, item_kind: str):
+    def _load_row(self):
         import db
 
-        items = [r for r in db.get_applicable_payroll_items(self.conn, int(self.row["employee_id"])) if r["item_kind"] == item_kind]
-        title = "支給項目" if item_kind == "pay" else "その他控除項目"
-        section = ttk.LabelFrame(parent, text=title)
-        section.pack(fill="x", pady=(10, 0))
+        self.row = db.get_payroll_by_id(self.conn, self.payroll_id)
 
-        if not items:
-            ttk.Label(section, text="該当する項目はありません。").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-            return
+    def _row_value(self, key: str, default=0):
+        return self.row[key] if key in self.row.keys() and self.row[key] is not None else default
 
-        ttk.Label(section, text="項目").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(section, text="金額").grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        ttk.Label(section, text="状態").grid(row=0, column=3, padx=5, pady=5, sticky="w")
+    def _build_header(self):
+        header = ttk.LabelFrame(self, text="対象")
+        header.pack(fill="x", padx=10, pady=10)
 
+        values = [
+            ("対象年月", self._row_value("target_month", "")),
+            ("社員番号", self._row_value("employee_code", "")),
+            ("社員名", self._row_value("name_kanji", "")),
+            ("部署", self._row_value("department", "")),
+            ("役職", self._row_value("position_name", "")),
+            ("雇用区分", self._row_value("employment_type_name", "")),
+        ]
+        for idx, (label, value) in enumerate(values):
+            ttk.Label(header, text=f"{label}: {value or ''}").grid(
+                row=idx // 3,
+                column=idx % 3,
+                padx=8,
+                pady=4,
+                sticky="w",
+            )
+
+    def _build_body(self):
+        body = ttk.Frame(self)
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+
+        pay_area = ttk.LabelFrame(body, text="支給")
+        pay_area.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        deduct_area = ttk.LabelFrame(body, text="控除")
+        deduct_area.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+
+        self.pay_inner = self._create_scrollable_area(pay_area)
+        self.deduct_inner = self._create_scrollable_area(deduct_area)
+
+        self._build_dynamic_items(self.pay_inner, "pay")
+        self._build_system_deductions(self.deduct_inner)
+        ttk.Separator(self.deduct_inner).grid(row=20, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
+        ttk.Label(self.deduct_inner, text="会社独自控除", font=("", 10, "bold")).grid(row=21, column=0, columnspan=3, padx=5, pady=(0, 4), sticky="w")
+        self._build_dynamic_items(self.deduct_inner, "deduction", start_row=22)
+        self._bind_scroll_recursive(self.pay_inner, self.scroll_canvases[0])
+        self._bind_scroll_recursive(self.deduct_inner, self.scroll_canvases[1])
+
+    def _create_scrollable_area(self, parent):
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        parent.grid_rowconfigure(0, weight=1)
+        parent.grid_columnconfigure(0, weight=1)
+
+        inner.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        self._bind_scroll_recursive(inner, canvas)
+        canvas.bind("<MouseWheel>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
+        canvas.bind("<Button-4>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
+        canvas.bind("<Button-5>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
+        self.scroll_canvases.append(canvas)
+        return inner
+
+    def _bind_scroll_recursive(self, widget, canvas):
+        widget.bind("<MouseWheel>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
+        widget.bind("<Button-4>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
+        widget.bind("<Button-5>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
+        for child in widget.winfo_children():
+            self._bind_scroll_recursive(child, canvas)
+
+    def _scroll_canvas(self, canvas, event):
+        if getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-3, "units")
+        elif getattr(event, "num", None) == 5:
+            canvas.yview_scroll(3, "units")
+        else:
+            canvas.yview_scroll(int(-3 * (event.delta / 120)), "units")
+        return "break"
+
+    def _bind_money_entry(self, entry, var: tk.StringVar):
+        entry.bind("<FocusIn>", lambda event: (_remove_commas(var), event.widget.select_range(0, "end")))
+        entry.bind("<FocusOut>", lambda event: _format_amount_var(var, self._update_totals))
+        entry.bind("<KeyRelease>", lambda event: self._update_totals())
+        self.money_entries.append(entry)
+
+    def _build_dynamic_items(self, parent, item_kind: str, start_row: int = 0):
+        import db
+
+        items = [
+            r
+            for r in db.get_applicable_payroll_items(self.conn, int(self.row["employee_id"]))
+            if r["item_kind"] == item_kind
+        ]
         saved_map = db.get_payroll_monthly_item_value_map(self.conn, self.payroll_id)
         target_month = self.row["target_month"]
-        total_var = tk.StringVar(value="0")
-        self.dynamic_item_vars[(item_kind, "_total")] = total_var
 
-        for idx, item in enumerate(items, start=1):
+        if not items:
+            ttk.Label(parent, text="該当する項目はありません。").grid(row=start_row, column=0, padx=5, pady=5, sticky="w")
+            return
+
+        for idx, item in enumerate(items, start=start_row):
             item_id = int(item["id"])
             saved = saved_map.get(item_id)
             source = "standard"
@@ -316,257 +298,184 @@ class PayrollEditorDialog(tk.Toplevel):
             else:
                 amount = db.get_employee_standard_amount(self.conn, int(self.row["employee_id"]), item_id, target_month)
                 if amount == 0 and item["code"] in {"officer_pay", "base_salary", "overtime_pay", "commute_nontax"}:
-                    amount = int(self.row[item["code"]] or 0)
+                    amount = int(self._row_value(item["code"], 0) or 0)
 
-            ttk.Label(section, text=item["name"]).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
-            var = tk.StringVar(value=str(amount))
-            ent = ttk.Entry(section, textvariable=var, width=16, justify="right")
-            ent.grid(row=idx, column=1, padx=5, pady=4, sticky="w")
-            ttk.Label(section, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
-            status = "ロック" if locked else ("保存済" if saved else "標準/0")
-            ttk.Label(section, text=status).grid(row=idx, column=3, padx=5, pady=4, sticky="w")
+            ttk.Label(parent, text=item["name"]).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+            var = tk.StringVar(value=_format_amount(amount))
+            ent = ttk.Entry(parent, textvariable=var, width=16, justify="right")
+            ent.grid(row=idx, column=1, padx=5, pady=4, sticky="e")
+            ttk.Label(parent, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
             if locked:
                 ent.configure(state="disabled")
-            var.trace_add("write", lambda *_: self._update_dynamic_totals())
+            else:
+                self._bind_money_entry(ent, var)
+            var.trace_add("write", lambda *_: self._update_totals())
             self.dynamic_item_vars[item_id] = var
             self.dynamic_item_sources[item_id] = {"item": item, "source": source, "locked": locked, "entry": ent}
 
-        ttk.Label(section, text="合計").grid(row=len(items) + 1, column=0, padx=5, pady=(8, 5), sticky="e")
-        ttk.Label(section, textvariable=total_var).grid(row=len(items) + 1, column=1, padx=5, pady=(8, 5), sticky="e")
-        ttk.Label(section, text="円").grid(row=len(items) + 1, column=2, padx=5, pady=(8, 5), sticky="w")
-        self._update_dynamic_totals()
+        parent.grid_columnconfigure(0, weight=1)
 
-    def _build_deduct_tab(self):
-        frm = ttk.Frame(self.tab_deduct)
-        frm.pack(fill="both", expand=True, padx=10, pady=10)
-        self._build_tax_section(frm)
-        self._build_dynamic_items_section(frm, "deduction")
-        return
+    def _system_amount(self, key: str) -> int:
+        return int(self._row_value(key, 0) or 0)
 
-    def _build_tax_section(self, parent):
-        section = ttk.LabelFrame(parent, text="税額")
-        section.pack(fill="x", pady=(0, 10))
+    def _build_system_deductions(self, parent):
+        ttk.Label(parent, text="システム控除", font=("", 10, "bold")).grid(row=0, column=0, columnspan=3, padx=5, pady=(5, 4), sticky="w")
 
-        def applied_value(applied_key, override_key):
-            if override_key in self.row.keys() and self.row[override_key] is not None:
-                return str(int(self.row[override_key] or 0))
-            return str(int(self.row[applied_key] or 0)) if applied_key in self.row.keys() else "0"
+        self.system_amount_vars = {}
+        rows = [
+            ("健康保険料", "health_ins_employee", None),
+            ("介護保険料", "care_ins_employee", None),
+            ("子ども・子育て支援金", "childcare_support_employee", None),
+            ("厚生年金保険料", "pension_ins_employee", None),
+            ("雇用保険料", "emp_ins_employee", None),
+            ("所得税", "withholding_tax_applied", self.open_withholding_override),
+            ("住民税", "resident_tax_applied", self.open_resident_tax_annual),
+        ]
+        for idx, (label, key, command) in enumerate(rows, start=1):
+            if command:
+                ttk.Button(parent, text=label, command=command, width=18).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+            else:
+                ttk.Label(parent, text=label).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+            var = tk.StringVar(value=_format_amount(self._system_amount(key)))
+            self.system_amount_vars[key] = var
+            ttk.Label(parent, textvariable=var, anchor="e", width=16).grid(row=idx, column=1, padx=5, pady=4, sticky="e")
+            ttk.Label(parent, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
+        parent.grid_columnconfigure(1, weight=1)
 
-        self.var_withholding_override = tk.StringVar(
-            value=applied_value("withholding_tax_applied", "withholding_tax_override")
-        )
-        self.var_resident_override = tk.StringVar(
-            value=applied_value("resident_tax_applied", "resident_tax_override")
-        )
-        self.var_withholding_reason = tk.StringVar(
-            value=self.row["withholding_tax_override_reason"] if "withholding_tax_override_reason" in self.row.keys() and self.row["withholding_tax_override_reason"] else ""
-        )
-        self.var_resident_reason = tk.StringVar(
-            value=self.row["resident_tax_override_reason"] if "resident_tax_override_reason" in self.row.keys() and self.row["resident_tax_override_reason"] else ""
-        )
+    def _build_note(self):
+        note_frame = ttk.LabelFrame(self, text="備考")
+        note_frame.pack(fill="x", padx=10, pady=(0, 8))
+        self.txt_note = tk.Text(note_frame, height=4, wrap="word")
+        self.txt_note.pack(fill="x", expand=True, padx=8, pady=8)
+        self.txt_note.insert("1.0", self._row_value("note", "") or "")
 
-        for row_idx, (label, var) in enumerate((
-            ("所得税", self.var_withholding_override),
-            ("住民税", self.var_resident_override),
-        )):
-            ttk.Label(section, text=label).grid(row=row_idx, column=0, padx=5, pady=5, sticky="w")
-            ent = ttk.Entry(section, textvariable=var, width=18, justify="right")
-            ent.grid(row=row_idx, column=1, padx=5, pady=5, sticky="w")
-            ent.bind("<KeyRelease>", self._update_dynamic_totals)
-            ttk.Label(section, text="円").grid(row=row_idx, column=2, padx=5, pady=5, sticky="w")
-            if label == "住民税":
-                ttk.Button(section, text="住民税設定", command=self._open_resident_tax_annual).grid(
-                    row=row_idx, column=3, padx=8, pady=5, sticky="w"
-                )
+    def _build_footer(self):
+        footer = ttk.Frame(self)
+        footer.pack(fill="x", padx=10, pady=(0, 10))
 
-    def _open_resident_tax_annual(self):
+        self.lbl_total_pay = ttk.Label(footer, text="支給合計: 0 円", font=("", 10, "bold"))
+        self.lbl_total_pay.pack(side="left", padx=(0, 16))
+        self.lbl_total_deduct = ttk.Label(footer, text="控除合計: 0 円", font=("", 10, "bold"))
+        self.lbl_total_deduct.pack(side="left", padx=(0, 16))
+        self.lbl_net = ttk.Label(footer, text="差引支給額: 0 円", font=("", 10, "bold"))
+        self.lbl_net.pack(side="left", padx=(0, 16))
+
+        ttk.Button(footer, text="保存", command=self.save).pack(side="right", padx=(6, 0))
+        ttk.Button(footer, text="閉じる", command=self._close).pack(side="right")
+
+    def _dynamic_total(self, item_kind: str) -> int:
+        total = 0
+        for item_id, meta in self.dynamic_item_sources.items():
+            if not isinstance(item_id, int) or meta["item"]["item_kind"] != item_kind:
+                continue
+            var = self.dynamic_item_vars.get(item_id)
+            if var is None:
+                continue
+            try:
+                total += _to_int(var.get())
+            except ValueError:
+                pass
+        return total
+
+    def _system_deduction_total(self) -> int:
+        keys = [
+            "health_ins_employee",
+            "care_ins_employee",
+            "childcare_support_employee",
+            "pension_ins_employee",
+            "emp_ins_employee",
+            "withholding_tax_applied",
+            "resident_tax_applied",
+        ]
+        return sum(self._system_amount(key) for key in keys)
+
+    def _update_totals(self):
+        pay_total = self._dynamic_total("pay")
+        deduction_total = self._dynamic_total("deduction") + self._system_deduction_total()
+        net = pay_total - deduction_total
+        if hasattr(self, "lbl_total_pay"):
+            self.lbl_total_pay.configure(text=f"支給合計: {pay_total:,} 円")
+            self.lbl_total_deduct.configure(text=f"控除合計: {deduction_total:,} 円")
+            self.lbl_net.configure(text=f"差引支給額: {net:,} 円")
+
+    def refresh_tax_display(self):
+        self._load_row()
+        for key, var in getattr(self, "system_amount_vars", {}).items():
+            var.set(_format_amount(self._system_amount(key)))
+        self._update_totals()
+
+    def open_withholding_override(self):
+        dlg = WithholdingOverrideDialog(self, self.conn, self.payroll_id, self.row, on_changed=self.refresh_tax_display)
+        self.wait_window(dlg)
+
+    def open_resident_tax_annual(self):
         from ui_resident_tax_annual import ResidentTaxAnnualFrame
 
+        fiscal_year = _resident_tax_fiscal_year(str(self.row["target_month"]))
+        employee_id = int(self.row["employee_id"])
+
         win = tk.Toplevel(self)
+        win.withdraw()
         win.title("住民税年次一括入力")
-        win.geometry("1180x620")
+        apply_safe_geometry(win, "1180x620", parent=self)
         win.transient(self)
-        frame = ResidentTaxAnnualFrame(win, self.conn)
+        frame = ResidentTaxAnnualFrame(
+            win,
+            self.conn,
+            initial_fiscal_year=fiscal_year,
+            focus_employee_id=employee_id,
+        )
         frame.pack(fill="both", expand=True)
         enable_enter_key_navigation(win)
-
-    def _build_note_tab(self):
-        frm = ttk.Frame(self.tab_note)
-        frm.pack(fill="both", expand=True, padx=10, pady=10)
-
-        ttk.Label(frm, text="備考（給与明細に出す予定のメモ）").pack(anchor="w")
-        self.txt_note = tk.Text(frm, height=12)
-        self.txt_note.pack(fill="both", expand=True, pady=(5,0))
-        self.txt_note.insert("1.0", self.row["note"] or "")
-
-    def _update_totals(self, event=None):
-        def safe_int_by_key(key: str) -> int:
-            var = self.vars.get(key)
-            if var is None:
-                return 0
-            try:
-                return _to_int(var.get())
-            except Exception:
-                return 0
-
-        pay_keys = [
-            "officer_pay", "base_salary", "deemed_ot", "overtime_pay", "special_allow", "commute_nontax",
-            "pay_free1", "pay_free2", "pay_free3", "pay_free4", "pay_free5",
-        ]
-        deduct_keys = [
-            "travel_saving", "deduct_free1", "deduct_free2", "deduct_free3", "deduct_free4", "deduct_free5",
-        ]
-
-        total_pay = sum(safe_int_by_key(k) for k in pay_keys)
-        # 住民税（画面の上書きがあればそれ、無ければ自動値）
-        resident_tax = 0
-        if hasattr(self, "var_resident_override"):
-            txt = (self.var_resident_override.get() or "").strip()
-            if txt != "":
-                try:
-                    resident_tax = _to_int(txt)
-                except Exception:
-                    resident_tax = 0
-            else:
-                # 自動値
-                if "resident_tax_auto" in self.row.keys():
-                    resident_tax = int(self.row["resident_tax_auto"] or 0)
-
-                # 所得税（源泉）
-        withholding_tax = 0
-        if hasattr(self, "var_withholding_override"):
-            txt = (self.var_withholding_override.get() or "").strip()
-            if txt != "":
-                try:
-                    withholding_tax = _to_int(txt)
-                except Exception:
-                    withholding_tax = 0
-            else:
-                if "withholding_tax_auto" in self.row.keys():
-                    withholding_tax = int(self.row["withholding_tax_auto"] or 0)
-
-        total_deduct = sum(safe_int_by_key(k) for k in deduct_keys) + resident_tax + withholding_tax
-        net = total_pay - total_deduct
-
-        self.lbl_total_pay.config(text=f"総支給：{total_pay:,}円")
-        self.lbl_total_deduct.config(text=f"控除合計：{total_deduct:,}円")
-        self.lbl_net.config(text=f"手取り：{net:,}円")
-
-    def _update_dynamic_totals(self):
-        totals = {
-            "pay": 0,
-            "deduction": 0,
-            "taxable_pay": 0,
-            "non_taxable_pay": 0,
-            "employment_insurance_base": 0,
-            "social_insurance_base": 0,
-        }
-        for item_id, meta in self.dynamic_item_sources.items():
-            if not isinstance(item_id, int):
-                continue
-            item = meta["item"]
-            var = self.dynamic_item_vars.get(item_id)
-            if not var:
-                continue
-            try:
-                amount = _to_int(var.get())
-            except Exception:
-                amount = 0
-            item_kind = item["item_kind"]
-            if item_kind in {"pay", "deduction"}:
-                totals[item_kind] += amount
-            if item_kind == "pay":
-                if int(item["is_taxable"] or 0):
-                    totals["taxable_pay"] += amount
-                else:
-                    totals["non_taxable_pay"] += amount
-                if int(item["is_employment_insurance_base"] or 0):
-                    totals["employment_insurance_base"] += amount
-                if int(item["is_social_insurance_base"] or 0):
-                    totals["social_insurance_base"] += amount
-        for kind in ("pay", "deduction"):
-            amount = totals[kind]
-            total_var = self.dynamic_item_vars.get((kind, "_total"))
-            if total_var:
-                total_var.set(f"{amount:,}")
-        if hasattr(self, "lbl_dynamic_pay"):
-            try:
-                income_tax = _to_int(self.var_withholding_override.get()) if hasattr(self, "var_withholding_override") else 0
-            except Exception:
-                income_tax = 0
-            try:
-                resident_tax = _to_int(self.var_resident_override.get()) if hasattr(self, "var_resident_override") else 0
-            except Exception:
-                resident_tax = 0
-            total_deduction = totals["deduction"] + income_tax + resident_tax
-            self.lbl_total_pay.config(text=f"支給合計：{totals['pay']:,}円")
-            self.lbl_total_deduct.config(text=f"控除合計：{total_deduction:,}円")
-            self.lbl_net.config(text=f"差引支給額：{totals['pay'] - total_deduction:,}円")
-            self.lbl_dynamic_pay.config(text=f"動的支給合計（参考）：{totals['pay']:,}円")
-            self.lbl_dynamic_taxable.config(text=f"動的課税支給額（参考）：{totals['taxable_pay']:,}円")
-            self.lbl_dynamic_nontax.config(text=f"動的非課税支給額（参考）：{totals['non_taxable_pay']:,}円")
-            self.lbl_dynamic_emp_base.config(text=f"動的雇用保険対象額（参考）：{totals['employment_insurance_base']:,}円")
-            self.lbl_dynamic_social_base.config(text=f"動的社会保険対象額（参考）：{totals['social_insurance_base']:,}円")
-            self.lbl_dynamic_custom_deduct.config(text=f"動的会社独自控除合計（参考）：{totals['deduction']:,}円")
-
-    def _clear_resident_override(self):
-        # 上書き入力を空にする（保存時に自動へ戻る）
-        if hasattr(self, "var_resident_override"):
-            self.var_resident_override.set("")
-        if hasattr(self, "var_resident_reason"):
-            self.var_resident_reason.set("")
-        self._update_totals()
-
-    def _clear_withholding_override(self):
-        if hasattr(self, "var_withholding_override"):
-            self.var_withholding_override.set("")
-        if hasattr(self, "var_withholding_reason"):
-            self.var_withholding_reason.set("")
-        self._update_totals()
+        show_centered_window(win, self)
 
     def save(self):
-        # 入力を辞書にまとめて、DBへ保存
         try:
             data = {}
             money_keys = [
-                "officer_pay", "base_salary", "deemed_ot", "overtime_pay", "special_allow", "commute_nontax",
-                "pay_free1", "pay_free2", "pay_free3", "pay_free4", "pay_free5",
-                "travel_saving", "deduct_free1", "deduct_free2", "deduct_free3", "deduct_free4", "deduct_free5",
+                "officer_pay",
+                "base_salary",
+                "deemed_ot",
+                "overtime_pay",
+                "special_allow",
+                "commute_nontax",
+                "pay_free1",
+                "pay_free2",
+                "pay_free3",
+                "pay_free4",
+                "pay_free5",
+                "travel_saving",
+                "deduct_free1",
+                "deduct_free2",
+                "deduct_free3",
+                "deduct_free4",
+                "deduct_free5",
             ]
-            for k in money_keys:
-                data[k] = 0
+            for key in money_keys:
+                data[key] = 0
+            for idx in range(1, 6):
+                data[f"pay_free{idx}_is_taxable"] = 0
+                data[f"pay_free{idx}_is_social_base"] = 0
+                data[f"pay_free{idx}_is_employment_base"] = 0
+            data["note"] = self.txt_note.get("1.0", "end-1c").strip()
 
-            # チェックボックス（0/1）
-            for i in range(1, 6):
-                data[f"pay_free{i}_is_taxable"] = 0
-                data[f"pay_free{i}_is_social_base"] = 0
-                data[f"pay_free{i}_is_employment_base"] = 0
-
-            data["note"] = self.txt_note.get("1.0", "end").strip()
-
-        except ValueError as e:
-            messagebox.showerror("入力エラー", str(e))
-            return
-
-        import db
-        dynamic_data = {}
-        try:
+            dynamic_data = {}
             for item_id, meta in self.dynamic_item_sources.items():
-                if not isinstance(item_id, int):
-                    continue
-                if meta.get("locked"):
+                if not isinstance(item_id, int) or meta.get("locked"):
                     continue
                 item = meta["item"]
                 amount = _to_int(self.dynamic_item_vars[item_id].get())
                 dynamic_data[item_id] = (item, amount, meta.get("source") or "manual")
         except ValueError as e:
-            messagebox.showerror("入力エラー", str(e))
+            messagebox.showerror("入力エラー", str(e), parent=self)
             return
+
+        import db
 
         db.update_payroll_inputs(self.conn, self.payroll_id, data)
         try:
             year, month = [int(x) for x in str(self.row["target_month"]).split("-")]
-            for item_id, (item, amount, source) in dynamic_data.items():
+            for item_id, (item, amount, _source) in dynamic_data.items():
                 db.upsert_payroll_monthly_item_value(
                     self.conn,
                     self.payroll_id,
@@ -581,31 +490,16 @@ class PayrollEditorDialog(tk.Toplevel):
                     None,
                 )
         except Exception as e:
-            messagebox.showerror("保存エラー", f"動的支給控除明細の保存に失敗しました。\n{e}")
+            messagebox.showerror("保存エラー", f"支給控除明細の保存に失敗しました。\n{e}", parent=self)
             return
+
         try:
             db.recalc_target_month(self.conn, str(self.row["target_month"]))
         except Exception as e:
-            messagebox.showwarning("再計算エラー", f"保存後の自動再計算でエラーが発生しました。\n{e}")
-        # 住民税 上書きの反映（空なら解除＝自動へ）
-        override_text = (self.var_resident_override.get() or "").strip() if hasattr(self, "var_resident_override") else ""
-        reason_text = (self.var_resident_reason.get() or "").strip() if hasattr(self, "var_resident_reason") else ""
+            messagebox.showwarning("再計算エラー", f"保存後の自動再計算でエラーが発生しました。\n{e}", parent=self)
 
-        if override_text == "":
-            db.override_resident_tax(self.conn, self.payroll_id, None, None)
-        else:
-            override_amount = _to_int(override_text)
-            db.override_resident_tax(self.conn, self.payroll_id, override_amount, reason_text)
-        
-        # 所得税（源泉） 上書きの反映（空なら解除＝自動へ）
-        wh_override_text = (self.var_withholding_override.get() or "").strip() if hasattr(self, "var_withholding_override") else ""
-        wh_reason_text = (self.var_withholding_reason.get() or "").strip() if hasattr(self, "var_withholding_reason") else ""
-
-        if wh_override_text == "":
-            db.override_withholding_tax(self.conn, self.payroll_id, None, None)
-        else:
-            wh_override_amount = _to_int(wh_override_text)
-            db.override_withholding_tax(self.conn, self.payroll_id, wh_override_amount, wh_reason_text)
-
-        messagebox.showinfo("保存完了", "保存しました。")
+        messagebox.showinfo("保存完了", "保存しました。", parent=self)
         self._close()
+
+    def _close(self):
+        self.destroy()
