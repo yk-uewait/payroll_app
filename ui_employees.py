@@ -2,7 +2,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
-class EmployeeEditorDialog(tk.Toplevel):
+PREFECTURES = [
+    "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+    "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+    "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
+    "岐阜県", "静岡県", "愛知県", "三重県",
+    "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+    "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+    "徳島県", "香川県", "愛媛県", "高知県",
+    "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
+]
+
+class _LegacyEmployeeEditorDialog(tk.Toplevel):
     def __init__(self, parent, conn, employee_id: int, on_saved=None):
         super().__init__(parent)
         self.withdraw()
@@ -57,12 +68,12 @@ class EmployeeEditorDialog(tk.Toplevel):
         ttk.Label(frm, text="氏名").grid(row=0, column=2, sticky="w", padx=5, pady=5)
         ttk.Entry(frm, textvariable=self.var_name, width=20).grid(row=0, column=3, sticky="w", padx=5, pady=5)
 
-        ttk.Label(frm, text="部署").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(frm, text="部署・事業所").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.cmb_department = ttk.Combobox(
             frm,
             textvariable=self.var_department_id,
             values=self.load_named_master_options("departments", self.department_options),
-            width=18,
+            width=28,
             state="readonly",
         )
         self.cmb_department.grid(row=1, column=1, sticky="w", padx=5, pady=5)
@@ -209,11 +220,16 @@ class EmployeeEditorDialog(tk.Toplevel):
     def load_named_master_options(self, table: str, target_options: list):
         import db
 
-        rows = db.list_named_master(self.conn, table)
         target_options.clear()
         target_options.append(("", None))
-        for r in rows:
-            target_options.append((r["name"], r["id"]))
+        if table == "departments":
+            rows = db.list_department_hierarchy(self.conn, include_inactive=False)
+            for r in rows:
+                target_options.append((r["full_name"], r["id"]))
+        else:
+            rows = db.list_named_master(self.conn, table)
+            for r in rows:
+                target_options.append((r["name"], r["id"]))
         return [x[0] for x in target_options]
 
     def _selected_master_id(self, var: tk.StringVar, options: list):
@@ -438,6 +454,573 @@ class EmployeeEditorDialog(tk.Toplevel):
             pass
         self.destroy()
 
+class EmployeeEditorDialog(tk.Toplevel):
+    def __init__(self, parent, conn, employee_id: int, on_saved=None):
+        super().__init__(parent)
+        self.withdraw()
+        self.conn = conn
+        self.employee_id = employee_id
+        self.on_saved = on_saved
+        self.title("社員編集")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.grab_set()
+
+        self.var_code = tk.StringVar()
+        self.var_name = tk.StringVar()
+        self.var_name_kana = tk.StringVar()
+        self.var_department_id = tk.StringVar()
+        self.var_position_id = tk.StringVar()
+        self.var_employment_type_id = tk.StringVar()
+        self.department_options = []
+        self.position_options = []
+        self.employment_type_options = []
+        self.var_payment_schedule_id = tk.StringVar()
+        self.payment_schedule_options = []
+        self.var_std_health = tk.StringVar(value="0")
+        self.var_std_pension = tk.StringVar(value="0")
+        self.var_tax_type = tk.StringVar(value="甲")
+        self.var_dependents = tk.IntVar(value=0)
+        self.var_social_prefecture = tk.StringVar()
+        self.var_address_postal_code = tk.StringVar()
+        self.var_address_prefecture = tk.StringVar()
+        self.var_address_city = tk.StringVar()
+        self.var_address_detail = tk.StringVar()
+        self.var_resident_tax_municipality = tk.StringVar()
+        self.var_phone = tk.StringVar()
+        self.var_email = tk.StringVar()
+        self.var_bank_name = tk.StringVar()
+        self.var_bank_branch_name = tk.StringVar()
+        self.var_bank_account_type = tk.StringVar()
+        self.var_bank_account_number = tk.StringVar()
+        self.var_bank_account_holder = tk.StringVar()
+        self.var_birth_y = tk.StringVar()
+        self.var_birth_m = tk.StringVar()
+        self.var_birth_d = tk.StringVar()
+        self.var_hire_y = tk.StringVar()
+        self.var_hire_m = tk.StringVar()
+        self.var_hire_d = tk.StringVar()
+        self.var_leave_y = tk.StringVar()
+        self.var_leave_m = tk.StringVar()
+        self.var_leave_d = tk.StringVar()
+        self.var_retirement_processed = tk.IntVar(value=0)
+        self.txt_memo = None
+
+        self._build_layout()
+        if self.employee_id:
+            self.load_employee()
+
+        self.bind("<Return>", lambda e: self.save())
+        self.bind("<Escape>", lambda e: self.close())
+        enable_enter_key_navigation(self)
+        self.geometry("640x720")
+        show_centered_window(self, parent)
+        self.after(10, lambda: self.focus_force())
+
+    def _build_layout(self):
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True)
+        outer.grid_rowconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+
+        self.notebook = ttk.Notebook(outer)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+        self._tab_canvases = {}
+        self._tab_forms = {}
+
+        basic_tab, basic_form = self._create_scroll_tab("基本情報")
+        payroll_tab, payroll_form = self._create_scroll_tab("給与・税社保")
+        address_tab, address_form = self._create_scroll_tab("住所・振込・メモ")
+
+        self._build_basic_section(basic_form)
+        self._build_employment_section(basic_form)
+        self._build_payment_calc_section(payroll_form)
+        self._build_social_insurance_section(payroll_form)
+        self._build_income_tax_section(payroll_form)
+        self._build_resident_tax_section(payroll_form)
+        self._build_judgement_section(payroll_form)
+        self._build_address_section(address_form)
+        self._build_bank_section(address_form)
+        self._build_memo_section(address_form)
+
+        btns = ttk.Frame(outer, padding=(10, 8))
+        btns.grid(row=1, column=0, sticky="ew")
+        ttk.Button(btns, text="保存", command=self.save).pack(side="right", padx=(8, 0))
+        ttk.Button(btns, text="閉じる", command=self.close).pack(side="right")
+
+    def _create_scroll_tab(self, title):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=title)
+        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_columnconfigure(0, weight=1)
+        canvas = tk.Canvas(tab, highlightthickness=0)
+        v_scroll = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        h_scroll = ttk.Scrollbar(tab, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        v_scroll.grid(row=0, column=1, sticky="ns")
+        h_scroll.grid(row=1, column=0, sticky="ew")
+        form = ttk.Frame(canvas, padding=10)
+        window_id = canvas.create_window((0, 0), window=form, anchor="nw")
+        form.bind("<Configure>", lambda _e, c=canvas: c.configure(scrollregion=c.bbox("all")))
+        canvas.bind(
+            "<Configure>",
+            lambda event, c=canvas, f=form, w=window_id: c.itemconfigure(w, width=max(event.width, f.winfo_reqwidth())),
+        )
+        self._tab_canvases[str(tab)] = canvas
+        self._tab_forms[str(tab)] = form
+        self._bind_scroll(canvas)
+        self._bind_scroll(form)
+        return tab, form
+
+    def _section(self, parent, title):
+        frame = ttk.LabelFrame(parent, text=title, padding=8)
+        frame.pack(fill="x", expand=True, pady=(0, 8))
+        self._bind_scroll(frame)
+        return frame
+
+    def _bind_scroll(self, widget):
+        widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind("<Shift-MouseWheel>", self._on_shift_mousewheel, add="+")
+        widget.bind("<Button-4>", self._on_mousewheel, add="+")
+        widget.bind("<Button-5>", self._on_mousewheel, add="+")
+
+    def _bind_new_widget(self, widget):
+        self._bind_scroll(widget)
+        return widget
+
+    def _label(self, parent, text, row, column=0):
+        label = ttk.Label(parent, text=text)
+        label.grid(row=row, column=column, sticky="w", padx=5, pady=4)
+        self._bind_scroll(label)
+        return label
+
+    def _entry(self, parent, var, row, column=1, width=22, **kwargs):
+        ent = ttk.Entry(parent, textvariable=var, width=width, **kwargs)
+        ent.grid(row=row, column=column, sticky="w", padx=5, pady=4)
+        return self._bind_new_widget(ent)
+
+    def _combo(self, parent, var, values, row, column=1, width=22):
+        cmb = ttk.Combobox(parent, textvariable=var, values=values, width=width, state="readonly")
+        cmb.grid(row=row, column=column, sticky="w", padx=5, pady=4)
+        return self._bind_new_widget(cmb)
+
+    def _date_fields(self, parent, row, column, vars_tuple):
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=column, sticky="w", padx=5, pady=4)
+        y, m, d = vars_tuple
+        for var, suffix, width in ((y, "年", 6), (m, "月", 4), (d, "日", 4)):
+            self._bind_new_widget(ttk.Entry(frame, textvariable=var, width=width, justify="right")).pack(side="left")
+            self._bind_new_widget(ttk.Label(frame, text=suffix)).pack(side="left", padx=(2, 8 if suffix != "日" else 0))
+        self._bind_scroll(frame)
+        return frame
+
+    def _build_basic_section(self, parent):
+        frame = self._section(parent, "基本情報")
+        frame.grid_columnconfigure(2, minsize=30)
+        self._label(frame, "社員番号", 0, 0)
+        self._entry(frame, self.var_code, 0, 1)
+        self._label(frame, "氏名", 0, 3)
+        self._entry(frame, self.var_name, 0, 4)
+        self._label(frame, "フリガナ", 1, 0)
+        self._entry(frame, self.var_name_kana, 1, 1)
+        self._label(frame, "生年月日", 1, 3)
+        self._date_fields(frame, 1, 4, (self.var_birth_y, self.var_birth_m, self.var_birth_d))
+        self._label(frame, "入社日", 2, 0)
+        self._date_fields(frame, 2, 1, (self.var_hire_y, self.var_hire_m, self.var_hire_d))
+        self._label(frame, "退職日", 2, 3)
+        self._date_fields(frame, 2, 4, (self.var_leave_y, self.var_leave_m, self.var_leave_d))
+        chk = ttk.Checkbutton(frame, text="退職処理済み", variable=self.var_retirement_processed)
+        chk.configure(text="退職処理")
+        chk.grid(row=3, column=4, sticky="w", padx=5, pady=(0, 2))
+        self._bind_scroll(chk)
+        note = ttk.Label(frame, text="チェックすると退職扱いとなります", foreground="#555555")
+        note.grid(row=4, column=4, sticky="w", padx=5, pady=(0, 4))
+        self._bind_scroll(note)
+
+    def _build_employment_section(self, parent):
+        frame = self._section(parent, "所属・雇用")
+        self._label(frame, "部署・事業所", 0, 0)
+        self.cmb_department = self._combo(frame, self.var_department_id, self.load_named_master_options("departments", self.department_options), 0, 1, width=42)
+        self.cmb_department.grid_configure(columnspan=3, sticky="ew")
+        self._label(frame, "役職", 1, 0)
+        self.cmb_position = self._combo(frame, self.var_position_id, self.load_named_master_options("positions", self.position_options), 1, 1, width=14)
+        self._label(frame, "雇用区分", 1, 2)
+        self.cmb_employment_type = self._combo(frame, self.var_employment_type_id, self.load_named_master_options("employment_types", self.employment_type_options), 1, 3, width=14)
+        self._label(frame, "給与支給方式", 2, 0)
+        self.cmb_payment_schedule = self._combo(frame, self.var_payment_schedule_id, self.load_payment_schedule_options(), 2, 1, width=22)
+
+    def _build_payment_calc_section(self, parent):
+        frame = self._section(parent, "給与計算")
+        frame.grid_columnconfigure(2, minsize=30)
+        self._label(frame, "標準報酬月額（健保）", 0, 0)
+        self._entry(frame, self.var_std_health, 0, 1, width=10, justify="right")
+        self._label(frame, "標準報酬月額（厚年）", 0, 3)
+        self._entry(frame, self.var_std_pension, 0, 4, width=10, justify="right")
+
+    def _build_social_insurance_section(self, parent):
+        frame = self._section(parent, "社会保険")
+        note = ttk.Label(frame, text="協会けんぽ等の社会保険料率判定に使用します。社員住所ではありません。", foreground="#555555", wraplength=620)
+        note.grid(row=0, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 6))
+        self._bind_scroll(note)
+        self._label(frame, "都道府県", 1, 0)
+        self._combo(frame, self.var_social_prefecture, PREFECTURES, 1, 1, width=12)
+
+    def _build_income_tax_section(self, parent):
+        frame = self._section(parent, "所得税")
+        frame.grid_columnconfigure(2, minsize=30)
+        self._label(frame, "甲乙区分", 0, 0)
+        self._combo(frame, self.var_tax_type, ["甲", "乙"], 0, 1, width=4)
+        self._label(frame, "扶養人数", 0, 3)
+        self._entry(frame, self.var_dependents, 0, 4, width=8, justify="right")
+
+    def _build_resident_tax_section(self, parent):
+        frame = self._section(parent, "住民税")
+        note = ttk.Label(frame, text="住民税一括入力画面の並び替え・確認用に使用します。", foreground="#555555", wraplength=620)
+        note.grid(row=0, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 6))
+        self._bind_scroll(note)
+        self._label(frame, "市区町村", 1, 0)
+        self._entry(frame, self.var_resident_tax_municipality, 1, 1, width=28)
+
+    def _build_judgement_section(self, parent):
+        frame = self._section(parent, "判定情報")
+        for row, (label, value) in enumerate((
+            ("社会保険加入", "標準報酬月額により判定"),
+            ("雇用保険加入", "給与計算時に判定"),
+            ("介護保険対象", "生年月日から判定"),
+        )):
+            self._label(frame, label, row, 0)
+            value_label = ttk.Label(frame, text=value)
+            value_label.grid(row=row, column=1, sticky="w", padx=5, pady=4)
+            self._bind_scroll(value_label)
+
+    def _build_address_section(self, parent):
+        frame = self._section(parent, "住所・連絡先")
+        frame.grid_columnconfigure(2, minsize=24)
+        self._label(frame, "郵便番号", 0, 0)
+        self._entry(frame, self.var_address_postal_code, 0, 1, width=14)
+        self._label(frame, "都道府県", 0, 3)
+        self._combo(frame, self.var_address_prefecture, PREFECTURES, 0, 4, width=10)
+        self._label(frame, "市区町村", 1, 0)
+        self._entry(frame, self.var_address_city, 1, 1, width=23)
+        self._label(frame, "番地・建物名", 1, 3)
+        self._entry(frame, self.var_address_detail, 1, 4, width=30)
+        self._label(frame, "電話番号", 2, 0)
+        self._entry(frame, self.var_phone, 2, 1, width=18)
+        self._label(frame, "メールアドレス", 2, 3)
+        self._entry(frame, self.var_email, 2, 4, width=30)
+
+    def _build_bank_section(self, parent):
+        frame = self._section(parent, "振込先")
+        self._label(frame, "銀行名", 0, 0)
+        self._entry(frame, self.var_bank_name, 0, 1, width=24)
+        self._label(frame, "支店名", 0, 2)
+        self._entry(frame, self.var_bank_branch_name, 0, 3, width=20)
+        self._label(frame, "口座種別", 1, 0)
+        self._combo(frame, self.var_bank_account_type, ["普通", "当座", "貯蓄", "その他"], 1, 1, width=8)
+        self._label(frame, "口座番号", 1, 2)
+        self._entry(frame, self.var_bank_account_number, 1, 3, width=13)
+        self._label(frame, "口座名義", 2, 0)
+        self._entry(frame, self.var_bank_account_holder, 2, 1, width=24)
+
+    def _build_memo_section(self, parent):
+        frame = self._section(parent, "メモ")
+        self.txt_memo = tk.Text(frame, width=72, height=3, wrap="word")
+        self.txt_memo.grid(row=0, column=0, columnspan=4, sticky="ew", padx=5, pady=4)
+        self._bind_scroll(self.txt_memo)
+
+    def _on_canvas_configure(self, event):
+        canvas = event.widget
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _current_canvas(self):
+        try:
+            selected = self.notebook.select()
+            canvas = self._tab_canvases.get(str(selected))
+            if canvas is not None:
+                return canvas
+        except Exception:
+            pass
+        return next(iter(self._tab_canvases.values()), None)
+
+    def _on_mousewheel(self, event):
+        if getattr(event, "state", 0) & 0x0001:
+            return self._on_shift_mousewheel(event)
+        if getattr(event, "num", None) == 4:
+            units = -3
+        elif getattr(event, "num", None) == 5:
+            units = 3
+        else:
+            units = int(-3 * (event.delta / 120))
+        canvas = self._current_canvas()
+        if canvas is not None:
+            canvas.yview_scroll(units, "units")
+        return "break"
+
+    def _on_shift_mousewheel(self, event):
+        if getattr(event, "num", None) == 4:
+            units = -3
+        elif getattr(event, "num", None) == 5:
+            units = 3
+        else:
+            units = int(-3 * (event.delta / 120))
+        canvas = self._current_canvas()
+        if canvas is not None:
+            canvas.xview_scroll(units, "units")
+        return "break"
+
+    def load_payment_schedule_options(self):
+        import db
+        rows = db.list_payment_schedules(self.conn)
+        self.payment_schedule_options = [(r["schedule_name"], r["payment_schedule_id"]) for r in rows]
+        return [x[0] for x in self.payment_schedule_options]
+
+    def load_named_master_options(self, table: str, target_options: list):
+        import db
+        target_options.clear()
+        target_options.append(("", None))
+        if table == "departments":
+            rows = db.list_department_hierarchy(self.conn, include_inactive=False)
+            for r in rows:
+                target_options.append((r["full_name"], r["id"]))
+        else:
+            rows = db.list_named_master(self.conn, table)
+            for r in rows:
+                target_options.append((r["name"], r["id"]))
+        return [x[0] for x in target_options]
+
+    def _selected_master_id(self, var: tk.StringVar, options: list):
+        selected = var.get().strip()
+        for label, row_id in options:
+            if label == selected:
+                return row_id
+        return None
+
+    def _set_master_by_id(self, var: tk.StringVar, options: list, row_id):
+        if not row_id:
+            var.set("")
+            return
+        for label, option_id in options:
+            if option_id and int(option_id) == int(row_id):
+                var.set(label)
+                return
+        var.set("")
+
+    def _split_date_to_vars(self, date_str, var_y, var_m, var_d):
+        if not date_str:
+            var_y.set("")
+            var_m.set("")
+            var_d.set("")
+            return
+        try:
+            y, m, d = date_str.split("-")
+            var_y.set(str(int(y)))
+            var_m.set(str(int(m)))
+            var_d.set(str(int(d)))
+        except Exception:
+            var_y.set("")
+            var_m.set("")
+            var_d.set("")
+
+    def _build_date_from_vars(self, var_y, var_m, var_d):
+        y = (var_y.get() or "").strip()
+        m = (var_m.get() or "").strip()
+        d = (var_d.get() or "").strip()
+        if not y and not m and not d:
+            return None
+        if not y or not m or not d:
+            raise ValueError("日付が途中までしか入力されていません。")
+        return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+
+    def get_selected_payment_schedule_id(self):
+        selected_label = self.var_payment_schedule_id.get().strip()
+        for label, schedule_id in self.payment_schedule_options:
+            if label == selected_label:
+                return schedule_id
+        return None
+
+    def set_payment_schedule_by_id(self, payment_schedule_id):
+        if not payment_schedule_id:
+            self.var_payment_schedule_id.set("")
+            return
+        for label, schedule_id in self.payment_schedule_options:
+            if int(schedule_id) == int(payment_schedule_id):
+                self.var_payment_schedule_id.set(label)
+                return
+        self.var_payment_schedule_id.set("")
+
+    def load_employee(self):
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT employee_id, employee_code, name_kanji, COALESCE(name_kana, '') AS name_kana,
+                   department, department_id, position_id, employment_type_id,
+                   payday_group, payment_schedule_id, work_prefecture_name,
+                   COALESCE(address_postal_code, '') AS address_postal_code,
+                   COALESCE(address_prefecture, '') AS address_prefecture,
+                   COALESCE(address_city, '') AS address_city,
+                   COALESCE(address_detail, '') AS address_detail,
+                   COALESCE(resident_tax_municipality, '') AS resident_tax_municipality,
+                   COALESCE(phone, '') AS phone,
+                   COALESCE(email, '') AS email,
+                   COALESCE(bank_name, '') AS bank_name,
+                   COALESCE(bank_branch_name, '') AS bank_branch_name,
+                   COALESCE(bank_account_type, '') AS bank_account_type,
+                   COALESCE(bank_account_number, '') AS bank_account_number,
+                   COALESCE(bank_account_holder, '') AS bank_account_holder,
+                   COALESCE(std_monthly_wage, 0) AS std_monthly_wage,
+                   COALESCE(std_pension_wage, 0) AS std_pension_wage,
+                   COALESCE(tax_type, '甲') AS tax_type,
+                   COALESCE(dependents_count, 0) AS dependents_count,
+                   birth_date, hire_date, leave_date,
+                   COALESCE(retirement_processed, 0) AS retirement_processed,
+                   memo
+            FROM employees
+            WHERE employee_id = ?
+            """,
+            (self.employee_id,),
+        )
+        r = cur.fetchone()
+        if not r:
+            messagebox.showerror("エラー", "社員情報が見つかりません。")
+            self.close()
+            return
+
+        self.var_code.set(r["employee_code"])
+        self.var_name.set(r["name_kanji"])
+        self.var_name_kana.set(r["name_kana"] or "")
+        self._set_master_by_id(self.var_department_id, self.department_options, r["department_id"] if "department_id" in r.keys() else None)
+        self._set_master_by_id(self.var_position_id, self.position_options, r["position_id"] if "position_id" in r.keys() else None)
+        self._set_master_by_id(self.var_employment_type_id, self.employment_type_options, r["employment_type_id"] if "employment_type_id" in r.keys() else None)
+        if r["payment_schedule_id"]:
+            self.set_payment_schedule_by_id(r["payment_schedule_id"])
+        else:
+            old_payday = int(r["payday_group"] or 25)
+            for label, _schedule_id in self.payment_schedule_options:
+                if str(old_payday) in label:
+                    self.var_payment_schedule_id.set(label)
+                    break
+        self.var_std_health.set(f'{int(r["std_monthly_wage"] or 0):,}')
+        self.var_std_pension.set(f'{int(r["std_pension_wage"] or 0):,}')
+        self.var_tax_type.set(r["tax_type"] or "甲")
+        self.var_dependents.set(int(r["dependents_count"] or 0))
+        self.var_social_prefecture.set(r["work_prefecture_name"] or "")
+        self.var_address_postal_code.set(r["address_postal_code"] or "")
+        self.var_address_prefecture.set(r["address_prefecture"] or "")
+        self.var_address_city.set(r["address_city"] or "")
+        self.var_address_detail.set(r["address_detail"] or "")
+        self.var_resident_tax_municipality.set(r["resident_tax_municipality"] or "")
+        self.var_phone.set(r["phone"] or "")
+        self.var_email.set(r["email"] or "")
+        self.var_bank_name.set(r["bank_name"] or "")
+        self.var_bank_branch_name.set(r["bank_branch_name"] or "")
+        self.var_bank_account_type.set(r["bank_account_type"] or "")
+        self.var_bank_account_number.set(r["bank_account_number"] or "")
+        self.var_bank_account_holder.set(r["bank_account_holder"] or "")
+        self._split_date_to_vars(r["birth_date"], self.var_birth_y, self.var_birth_m, self.var_birth_d)
+        self._split_date_to_vars(r["hire_date"], self.var_hire_y, self.var_hire_m, self.var_hire_d)
+        self._split_date_to_vars(r["leave_date"], self.var_leave_y, self.var_leave_m, self.var_leave_d)
+        self.var_retirement_processed.set(int(r["retirement_processed"] or 0))
+        self.txt_memo.delete("1.0", "end")
+        self.txt_memo.insert("1.0", r["memo"] or "")
+
+    def save(self):
+        code = self.var_code.get().strip()
+        name = self.var_name.get().strip()
+        department_id = self._selected_master_id(self.var_department_id, self.department_options)
+        position_id = self._selected_master_id(self.var_position_id, self.position_options)
+        employment_type_id = self._selected_master_id(self.var_employment_type_id, self.employment_type_options)
+        dept = self.var_department_id.get().strip()
+        payment_schedule_id = self.get_selected_payment_schedule_id()
+
+        try:
+            std_health = int((self.var_std_health.get() or "0").replace(",", ""))
+            std_pension = int((self.var_std_pension.get() or "0").replace(",", ""))
+            tax_type = self.var_tax_type.get().strip() or "甲"
+            deps = int(self.var_dependents.get() or 0)
+            birth = self._build_date_from_vars(self.var_birth_y, self.var_birth_m, self.var_birth_d)
+            hire_date = self._build_date_from_vars(self.var_hire_y, self.var_hire_m, self.var_hire_d)
+            leave_date = self._build_date_from_vars(self.var_leave_y, self.var_leave_m, self.var_leave_d)
+            retirement_processed = int(self.var_retirement_processed.get() or 0)
+            memo = self.txt_memo.get("1.0", "end-1c").strip() or None
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e))
+            return
+        except Exception:
+            messagebox.showerror("入力エラー", "標準報酬月額または日付の入力内容を確認してください。")
+            return
+
+        if not code or not name:
+            messagebox.showerror("入力エラー", "社員番号と氏名は必須です。")
+            return
+        if not payment_schedule_id:
+            messagebox.showerror("入力エラー", "給与支給方式を選択してください。")
+            return
+
+        from datetime import datetime
+        for label, value in [("生年月日", birth), ("入社日", hire_date), ("退職日", leave_date)]:
+            if value:
+                try:
+                    datetime.strptime(value, "%Y-%m-%d")
+                except Exception:
+                    messagebox.showerror("入力エラー", f"{label}は yyyy-mm-dd 形式で入力してください。")
+                    return
+        if hire_date and leave_date:
+            if datetime.strptime(leave_date, "%Y-%m-%d").date() < datetime.strptime(hire_date, "%Y-%m-%d").date():
+                messagebox.showerror("入力エラー", "退職日は入社日以降の日付を入力してください。")
+                return
+        if birth and hire_date:
+            if datetime.strptime(hire_date, "%Y-%m-%d").date() <= datetime.strptime(birth, "%Y-%m-%d").date():
+                messagebox.showerror("入力エラー", "入社日は生年月日より後の日付を入力してください。")
+                return
+
+        import db
+        db.upsert_employee(
+            self.conn,
+            code,
+            name,
+            dept,
+            0,
+            std_health,
+            std_pension,
+            tax_type,
+            deps,
+            self.var_social_prefecture.get().strip(),
+            self.var_address_postal_code.get().strip(),
+            self.var_address_prefecture.get().strip(),
+            self.var_address_city.get().strip(),
+            self.var_address_detail.get().strip(),
+            self.var_resident_tax_municipality.get().strip(),
+            birth,
+            payment_schedule_id,
+            hire_date,
+            leave_date,
+            retirement_processed,
+            memo,
+            department_id,
+            position_id,
+            employment_type_id,
+            name_kana=self.var_name_kana.get().strip(),
+            phone=self.var_phone.get().strip(),
+            email=self.var_email.get().strip(),
+            bank_name=self.var_bank_name.get().strip(),
+            bank_branch_name=self.var_bank_branch_name.get().strip(),
+            bank_account_type=self.var_bank_account_type.get().strip(),
+            bank_account_number=self.var_bank_account_number.get().strip(),
+            bank_account_holder=self.var_bank_account_holder.get().strip(),
+        )
+        if callable(self.on_saved):
+            self.on_saved()
+        self.close()
+
+    def close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+
 class EmployeesFrame(ttk.Frame):
     COLUMNS = ("id", "code", "name", "dept", "pref", "city", "address", "payday", "birth_date", "tax_type", "deps", "memo")
     DISPLAY_COLUMNS = ("code", "name", "dept", "pref", "city", "address", "payday", "birth_date", "tax_type", "deps", "memo")
@@ -481,7 +1064,7 @@ class EmployeesFrame(ttk.Frame):
             ("id", "ID", 60),
             ("code", "社員番号", 76),
             ("name", "氏名", 96),
-            ("dept", "部署", 96),
+            ("dept", "部署・事業所", 130),
             ("pref", "都道府県", 84),
             ("city", "市区町村", 110),
             ("address", "住所", 180),

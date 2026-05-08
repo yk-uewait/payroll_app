@@ -128,6 +128,13 @@ def _clamp_position(x: int, y: int, width: int, height: int, margin: int, bounds
     return x, y
 
 
+def _top_offset_position(width: int, height: int, margin: int, bounds: tuple[int, int, int, int], top_ratio: float) -> tuple[int, int]:
+    display_x, display_y, display_w, display_h = bounds
+    x = display_x + max((display_w - width) // 2, 0)
+    y = display_y + int(display_h * top_ratio)
+    return _clamp_position(x, y, width, height, margin, bounds)
+
+
 def center_window(window, parent=None, margin: int = 40):
     """Place a Tk/Toplevel window at the center of its parent or screen."""
     window.update_idletasks()
@@ -158,7 +165,7 @@ def center_window(window, parent=None, margin: int = 40):
     window.geometry(f"{width}x{height}+{x}+{y}")
 
 
-def apply_safe_geometry(window, geometry: str, parent=None, margin: int = 40):
+def apply_safe_geometry(window, geometry: str, parent=None, margin: int = 40, top_ratio: float | None = None):
     """Apply a requested geometry without enlarging it, shrinking only if needed."""
     parsed = _parse_geometry_size(geometry)
     if parsed is None:
@@ -168,6 +175,11 @@ def apply_safe_geometry(window, geometry: str, parent=None, margin: int = 40):
 
     bounds = _target_bounds(window, parent)
     width, height = _safe_size(parsed[0], parsed[1], margin, bounds)
+
+    if parent is None and top_ratio is not None:
+        x, y = _top_offset_position(width, height, margin, bounds, top_ratio)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        return
 
     if parent is not None:
         parent.update_idletasks()

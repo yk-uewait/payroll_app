@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS employees (
   employee_id      INTEGER PRIMARY KEY AUTOINCREMENT,
   employee_code    TEXT UNIQUE,
   name_kanji       TEXT NOT NULL,
+  name_kana        TEXT NOT NULL DEFAULT '',
   department       TEXT,
   department_id    INTEGER,
   position_id      INTEGER,
@@ -23,8 +24,18 @@ CREATE TABLE IF NOT EXISTS employees (
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
   work_prefecture_name TEXT NOT NULL DEFAULT '',
+  address_postal_code TEXT NOT NULL DEFAULT '',
+  address_prefecture TEXT NOT NULL DEFAULT '',
   address_city     TEXT NOT NULL DEFAULT '',
-  address_detail   TEXT NOT NULL DEFAULT ''
+  address_detail   TEXT NOT NULL DEFAULT '',
+  resident_tax_municipality TEXT NOT NULL DEFAULT '',
+  phone            TEXT NOT NULL DEFAULT '',
+  email            TEXT NOT NULL DEFAULT '',
+  bank_name        TEXT NOT NULL DEFAULT '',
+  bank_branch_name TEXT NOT NULL DEFAULT '',
+  bank_account_type TEXT NOT NULL DEFAULT '',
+  bank_account_number TEXT NOT NULL DEFAULT '',
+  bank_account_holder TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS payment_schedules (
@@ -299,7 +310,9 @@ CREATE TABLE IF NOT EXISTS company_settings (
 
 CREATE TABLE IF NOT EXISTS departments (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  name          TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  parent_department_id INTEGER,
+  department_type TEXT NOT NULL DEFAULT 'department',
   display_order INTEGER NOT NULL DEFAULT 0,
   is_active     INTEGER NOT NULL DEFAULT 1,
   memo          TEXT,

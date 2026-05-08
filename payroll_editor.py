@@ -22,6 +22,14 @@ def _format_amount(value) -> str:
         return "0"
 
 
+def _format_year_month(value: str) -> str:
+    try:
+        year, month = str(value).split("-", 1)
+        return f"{int(year):04d} 年 {int(month):02d} 月"
+    except Exception:
+        return str(value or "")
+
+
 def _remove_commas(var: tk.StringVar):
     var.set((var.get() or "").replace(",", ""))
 
@@ -170,10 +178,12 @@ class PayrollEditorDialog(tk.Toplevel):
 
         self._build_header()
         self._build_body()
+        self._build_net_total()
         self._build_note()
         self._build_footer()
 
         self._update_totals()
+        self._saved_snapshot = self._current_snapshot()
         enable_enter_key_navigation(self)
         show_centered_window(self, master)
 
@@ -190,7 +200,7 @@ class PayrollEditorDialog(tk.Toplevel):
         header.pack(fill="x", padx=10, pady=10)
 
         values = [
-            ("対象年月", self._row_value("target_month", "")),
+            ("対象年月", _format_year_month(self._row_value("target_month", ""))),
             ("社員番号", self._row_value("employee_code", "")),
             ("社員名", self._row_value("name_kanji", "")),
             ("部署", self._row_value("department", "")),
@@ -224,10 +234,19 @@ class PayrollEditorDialog(tk.Toplevel):
         self._build_dynamic_items(self.pay_inner, "pay")
         self._build_system_deductions(self.deduct_inner)
         ttk.Separator(self.deduct_inner).grid(row=20, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
-        ttk.Label(self.deduct_inner, text="会社独自控除", font=("", 10, "bold")).grid(row=21, column=0, columnspan=3, padx=5, pady=(0, 4), sticky="w")
-        self._build_dynamic_items(self.deduct_inner, "deduction", start_row=22)
+        self._build_dynamic_items(self.deduct_inner, "deduction", start_row=21)
         self._bind_scroll_recursive(self.pay_inner, self.scroll_canvases[0])
         self._bind_scroll_recursive(self.deduct_inner, self.scroll_canvases[1])
+
+        pay_total_frame = ttk.Frame(pay_area)
+        pay_total_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 8))
+        self.lbl_total_pay = ttk.Label(pay_total_frame, text="支給合計: 0 円", font=("", 10, "bold"))
+        self.lbl_total_pay.pack(side="right")
+
+        deduct_total_frame = ttk.Frame(deduct_area)
+        deduct_total_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 8))
+        self.lbl_total_deduct = ttk.Label(deduct_total_frame, text="控除合計: 0 円", font=("", 10, "bold"))
+        self.lbl_total_deduct.pack(side="right")
 
     def _create_scrollable_area(self, parent):
         canvas = tk.Canvas(parent, highlightthickness=0)
@@ -283,7 +302,13 @@ class PayrollEditorDialog(tk.Toplevel):
         target_month = self.row["target_month"]
 
         if not items:
-            ttk.Label(parent, text="該当する項目はありません。").grid(row=start_row, column=0, padx=5, pady=5, sticky="w")
+            item_label = "支給項目" if item_kind == "pay" else "控除項目"
+            ttk.Label(
+                parent,
+                text=f"{item_label}を追加したい場合は、「支給控除マスタ（中分類）」より項目の登録を行ってください。",
+                wraplength=220,
+                justify="left",
+            ).grid(row=start_row, column=0, columnspan=3, padx=5, pady=5, sticky="w")
             return
 
         for idx, item in enumerate(items, start=start_row):
@@ -319,8 +344,6 @@ class PayrollEditorDialog(tk.Toplevel):
         return int(self._row_value(key, 0) or 0)
 
     def _build_system_deductions(self, parent):
-        ttk.Label(parent, text="システム控除", font=("", 10, "bold")).grid(row=0, column=0, columnspan=3, padx=5, pady=(5, 4), sticky="w")
-
         self.system_amount_vars = {}
         rows = [
             ("健康保険料", "health_ins_employee", None),
@@ -331,9 +354,9 @@ class PayrollEditorDialog(tk.Toplevel):
             ("所得税", "withholding_tax_applied", self.open_withholding_override),
             ("住民税", "resident_tax_applied", self.open_resident_tax_annual),
         ]
-        for idx, (label, key, command) in enumerate(rows, start=1):
+        for idx, (label, key, command) in enumerate(rows, start=0):
             if command:
-                ttk.Button(parent, text=label, command=command, width=18).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+                ttk.Button(parent, text=label, command=command, width=9).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
             else:
                 ttk.Label(parent, text=label).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
             var = tk.StringVar(value=_format_amount(self._system_amount(key)))
@@ -341,6 +364,12 @@ class PayrollEditorDialog(tk.Toplevel):
             ttk.Label(parent, textvariable=var, anchor="e", width=16).grid(row=idx, column=1, padx=5, pady=4, sticky="e")
             ttk.Label(parent, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
         parent.grid_columnconfigure(1, weight=1)
+
+    def _build_net_total(self):
+        net_frame = ttk.Frame(self)
+        net_frame.pack(fill="x", padx=10, pady=(0, 8))
+        self.lbl_net = ttk.Label(net_frame, text="差引支給額: 0 円", font=("", 11, "bold"))
+        self.lbl_net.pack(side="right")
 
     def _build_note(self):
         note_frame = ttk.LabelFrame(self, text="備考")
@@ -353,13 +382,8 @@ class PayrollEditorDialog(tk.Toplevel):
         footer = ttk.Frame(self)
         footer.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.lbl_total_pay = ttk.Label(footer, text="支給合計: 0 円", font=("", 10, "bold"))
-        self.lbl_total_pay.pack(side="left", padx=(0, 16))
-        self.lbl_total_deduct = ttk.Label(footer, text="控除合計: 0 円", font=("", 10, "bold"))
-        self.lbl_total_deduct.pack(side="left", padx=(0, 16))
-        self.lbl_net = ttk.Label(footer, text="差引支給額: 0 円", font=("", 10, "bold"))
-        self.lbl_net.pack(side="left", padx=(0, 16))
-
+        ttk.Button(footer, text="前社員へ", command=lambda: self.navigate_employee(-1)).pack(side="left", padx=(0, 8))
+        ttk.Button(footer, text="次社員へ", command=lambda: self.navigate_employee(1)).pack(side="left", padx=(0, 8))
         ttk.Button(footer, text="保存", command=self.save).pack(side="right", padx=(6, 0))
         ttk.Button(footer, text="閉じる", command=self._close).pack(side="right")
 
@@ -397,6 +421,68 @@ class PayrollEditorDialog(tk.Toplevel):
             self.lbl_total_pay.configure(text=f"支給合計: {pay_total:,} 円")
             self.lbl_total_deduct.configure(text=f"控除合計: {deduction_total:,} 円")
             self.lbl_net.configure(text=f"差引支給額: {net:,} 円")
+
+    def _batch_payroll_ids(self) -> list[int]:
+        import db
+
+        rows = db.get_payroll_rows_by_pay_date(
+            self.conn,
+            str(self.row["target_month"]),
+            str(self.row["pay_date_applied"]),
+        )
+        return [int(row["payroll_id"]) for row in rows]
+
+    def navigate_employee(self, direction: int):
+        if self._has_unsaved_changes():
+            ok = messagebox.askyesno(
+                "確認",
+                "保存していない変更があります。保存せずに社員を移動しますか？",
+                parent=self,
+            )
+            if not ok:
+                return
+
+        ids = self._batch_payroll_ids()
+        if not ids or self.payroll_id not in ids:
+            messagebox.showinfo("確認", "移動できる社員が見つかりません。", parent=self)
+            return
+
+        current_idx = ids.index(self.payroll_id)
+        next_idx = current_idx + direction
+        if next_idx < 0 or next_idx >= len(ids):
+            messagebox.showinfo("確認", "これ以上移動できません。", parent=self)
+            return
+
+        self.payroll_id = ids[next_idx]
+        self._reload_view()
+
+    def _reload_view(self):
+        self.dynamic_item_vars = {}
+        self.dynamic_item_sources = {}
+        self.money_entries = []
+        self.scroll_canvases = []
+        self._load_row()
+        for child in self.winfo_children():
+            child.destroy()
+        self._build_header()
+        self._build_body()
+        self._build_net_total()
+        self._build_note()
+        self._build_footer()
+        self._update_totals()
+        self._saved_snapshot = self._current_snapshot()
+        enable_enter_key_navigation(self)
+
+    def _current_snapshot(self):
+        dynamic = {}
+        for item_id, var in self.dynamic_item_vars.items():
+            if isinstance(item_id, int):
+                dynamic[item_id] = (var.get() or "").strip()
+        note = self.txt_note.get("1.0", "end-1c") if hasattr(self, "txt_note") else ""
+        return dynamic, note
+
+    def _has_unsaved_changes(self) -> bool:
+        return getattr(self, "_saved_snapshot", None) != self._current_snapshot()
 
     def refresh_tax_display(self):
         self._load_row()

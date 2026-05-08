@@ -13,6 +13,14 @@ ITEM_KIND_LABELS = {
 }
 ITEM_KIND_REVERSE_LABELS = {label: key for key, label in ITEM_KIND_LABELS.items()}
 
+DEPARTMENT_TYPE_LABELS = {
+    "office": "事業所",
+    "department": "部署",
+    "section": "課・係",
+    "other": "その他",
+}
+DEPARTMENT_TYPE_REVERSE_LABELS = {label: key for key, label in DEPARTMENT_TYPE_LABELS.items()}
+
 
 class CompanySettingsDialog(tk.Toplevel):
     def __init__(self, parent, conn):
@@ -225,6 +233,225 @@ class NamedMasterFrame(ttk.Frame):
             messagebox.showinfo("確認", "行を選択してください。", parent=self)
             return
         db.move_display_order(self.conn, self.table, row["id"], direction, include_inactive=True)
+        self.refresh(select_id=row["id"])
+
+    def close_window(self):
+        self.winfo_toplevel().destroy()
+
+
+class DepartmentEditorDialog(tk.Toplevel):
+    def __init__(self, parent, conn, row=None, on_saved=None):
+        super().__init__(parent)
+        self.withdraw()
+        self.conn = conn
+        self.row = row
+        self.on_saved = on_saved
+        self.title("部署・事業所マスタ")
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(False, False)
+
+        self.var_name = tk.StringVar()
+        self.var_type = tk.StringVar(value=DEPARTMENT_TYPE_LABELS["department"])
+        self.var_parent = tk.StringVar(value="なし")
+        self.var_active = tk.IntVar(value=1)
+        self.var_memo = tk.StringVar()
+        self.parent_options = [("なし", None)]
+
+        frm = ttk.Frame(self, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="名称").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frm, textvariable=self.var_name, width=30).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(frm, text="種別").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        ttk.Combobox(
+            frm,
+            textvariable=self.var_type,
+            values=list(DEPARTMENT_TYPE_LABELS.values()),
+            width=14,
+            state="readonly",
+        ).grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(frm, text="親所属").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.Combobox(
+            frm,
+            textvariable=self.var_parent,
+            values=self._load_parent_options(),
+            width=34,
+            state="readonly",
+        ).grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        ttk.Checkbutton(frm, text="有効", variable=self.var_active).grid(row=3, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(frm, text="メモ").grid(row=4, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frm, textvariable=self.var_memo, width=40).grid(row=4, column=1, padx=5, pady=5, sticky="w")
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=5, column=0, columnspan=2, padx=5, pady=(10, 0), sticky="e")
+        ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
+
+        if row:
+            self.var_name.set(row["name"] or "")
+            self.var_type.set(DEPARTMENT_TYPE_LABELS.get(row["department_type"] if "department_type" in row.keys() else "department", "部署"))
+            self.var_active.set(int(row["is_active"] or 0))
+            self.var_memo.set(row["memo"] or "")
+            self._set_parent(int(row["parent_department_id"] or 0) if "parent_department_id" in row.keys() else None)
+
+        enable_enter_key_navigation(self)
+        show_centered_window(self, parent)
+
+    def _load_parent_options(self):
+        self.parent_options = [("なし", None)]
+        current_id = int(self.row["id"]) if self.row else None
+        excluded = {current_id} if current_id else set()
+        if current_id:
+            excluded.update(db.get_department_descendant_ids(self.conn, current_id))
+        for item in db.list_department_hierarchy(self.conn, include_inactive=False):
+            if item["id"] in excluded:
+                continue
+            self.parent_options.append((item["full_name"], item["id"]))
+        return [label for label, _ in self.parent_options]
+
+    def _selected_parent_id(self):
+        selected = self.var_parent.get()
+        for label, row_id in self.parent_options:
+            if label == selected:
+                return row_id
+        return None
+
+    def _set_parent(self, parent_id):
+        if not parent_id:
+            self.var_parent.set("なし")
+            return
+        for label, row_id in self.parent_options:
+            if row_id and int(row_id) == int(parent_id):
+                self.var_parent.set(label)
+                return
+        self.var_parent.set("なし")
+
+    def save(self):
+        name = self.var_name.get().strip()
+        if not name:
+            messagebox.showerror("入力エラー", "名称は必須です。", parent=self)
+            return
+        try:
+            db.upsert_department(
+                self.conn,
+                name,
+                DEPARTMENT_TYPE_REVERSE_LABELS.get(self.var_type.get(), "department"),
+                self._selected_parent_id(),
+                int(self.var_active.get() or 0),
+                self.var_memo.get().strip() or None,
+                self.row["id"] if self.row else None,
+            )
+        except Exception as e:
+            messagebox.showerror("保存エラー", str(e), parent=self)
+            return
+        if callable(self.on_saved):
+            self.on_saved()
+        self.close()
+
+    def close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+
+class DepartmentMasterFrame(ttk.Frame):
+    def __init__(self, master, conn):
+        super().__init__(master)
+        self.conn = conn
+        desc = (
+            "部署・事業所・課など、社員の所属先を管理します。\n"
+            "支店・営業所・本社を登録したい場合は、種別を「事業所」として登録してください。\n"
+            "部署や課を事業所の下に紐づけることで、所属を階層的に管理できます。"
+        )
+        ttk.Label(self, text=desc, justify="left").pack(anchor="w", padx=10, pady=(10, 6))
+
+        self.tree = ttk.Treeview(
+            self,
+            columns=("id", "type", "name", "parent", "active", "memo"),
+            displaycolumns=("type", "name", "parent", "active", "memo"),
+            show="headings",
+            height=12,
+        )
+        for col, label, width, anchor in [
+            ("type", "種別", 80, "center"),
+            ("name", "名称", 220, "w"),
+            ("parent", "親所属", 180, "w"),
+            ("active", "有効", 50, "center"),
+            ("memo", "メモ", 220, "w"),
+        ]:
+            self.tree.heading(col, text=label)
+            self.tree.column(col, width=width, anchor=anchor, stretch=(col == "memo"))
+        self.tree.pack(fill="both", expand=True, padx=10, pady=(4, 5))
+        self.tree.bind("<Double-1>", lambda event: self.edit_selected())
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
+        ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="上へ", command=lambda: self.move_selected("up")).pack(side="left", padx=5)
+        ttk.Button(btns, text="下へ", command=lambda: self.move_selected("down")).pack(side="left", padx=5)
+        ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="閉じる", command=self.close_window).pack(side="right", padx=5)
+        self.refresh()
+        enable_enter_key_navigation(self)
+
+    def refresh(self, select_id=None):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for item in db.list_department_hierarchy(self.conn, include_inactive=True):
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(item["id"]),
+                values=(
+                    item["id"],
+                    item["department_type_label"],
+                    item["display_name"],
+                    item["parent_name"],
+                    "○" if item["is_active"] else "",
+                    item["memo"],
+                ),
+            )
+        if select_id is not None and self.tree.exists(str(select_id)):
+            self.tree.selection_set(str(select_id))
+            self.tree.see(str(select_id))
+
+    def _selected_row(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        vals = self.tree.item(sel[0], "values")
+        return db.get_named_master_by_id(self.conn, "departments", int(vals[0])) if vals else None
+
+    def add(self):
+        dlg = DepartmentEditorDialog(self, self.conn, on_saved=self.refresh)
+        self.wait_window(dlg)
+
+    def edit_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        dlg = DepartmentEditorDialog(self, self.conn, row=row, on_saved=self.refresh)
+        self.wait_window(dlg)
+
+    def disable_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        if messagebox.askyesno("確認", f"{row['name']} を無効化しますか？", parent=self):
+            db.soft_delete_named_master(self.conn, "departments", row["id"])
+            self.refresh()
+
+    def move_selected(self, direction):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        db.move_department_display_order(self.conn, row["id"], direction, include_inactive=True)
         self.refresh(select_id=row["id"])
 
     def close_window(self):

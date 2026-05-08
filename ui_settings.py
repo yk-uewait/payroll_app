@@ -8,6 +8,7 @@ from ui_payment_schedule import PaymentScheduleFrame
 from ui_phase1_masters import (
     CompanySettingsDialog,
     EmployeeStandardValueFrame,
+    DepartmentMasterFrame,
     NamedMasterFrame,
     PayrollCategoryFrame,
     PayrollItemFrame,
@@ -97,7 +98,7 @@ class SettingsFrame(ttk.Frame):
         self._add_section(scroll_frame, "会社・組織")
         self._add_setting_row(scroll_frame, "会社設定", self.open_company_settings, "会社名、住所、電話番号など、帳票に表示する会社情報を設定します。")
         self._add_setting_row(scroll_frame, "社員管理", self.open_employees, "社員番号、氏名、所属、給与支給方式など、給与計算に使う社員情報を管理します。")
-        self._add_setting_row(scroll_frame, "部署マスタ", self.open_departments, "社員に紐づける部署を設定します。給与項目の表示条件にも使用できます。")
+        self._add_setting_row(scroll_frame, "部署・事業所マスタ", self.open_departments, "部署・事業所・課など、社員の所属先を階層的に設定します。給与項目の表示条件にも使用できます。")
         self._add_setting_row(scroll_frame, "役職マスタ", self.open_positions, "社員に紐づける役職を設定します。役職ごとの手当表示などに使用できます。")
         self._add_setting_row(scroll_frame, "雇用区分マスタ", self.open_employment_types, "役員、正社員、契約社員、パートなどの雇用区分を設定します。")
 
@@ -188,10 +189,10 @@ class SettingsFrame(ttk.Frame):
     def open_departments(self):
         win = FramePopupWindow(
             self,
-            title="部署マスタ",
-            frame_class=lambda parent, conn: NamedMasterFrame(parent, conn, "departments", "部署マスタ"),
+            title="部署・事業所マスタ",
+            frame_class=DepartmentMasterFrame,
             conn=self.conn,
-            geometry="650x420",
+            geometry="850x520",
         )
         win.focus()
 

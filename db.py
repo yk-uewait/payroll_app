@@ -13,6 +13,7 @@ DB_PATH = Path(__file__).resolve().parent / "payroll.db"
 EMPLOYEE_CSV_COLUMNS = [
     "社員番号",
     "氏名",
+    "フリガナ",
     "部署",
     "給与支給方式",
     "給与支給方式ID",
@@ -26,8 +27,18 @@ EMPLOYEE_CSV_COLUMNS = [
     "源泉",
     "扶養人数",
     "都道府県",
+    "郵便番号",
+    "住所都道府県",
     "市区町村",
     "住所",
+    "住民税市区町村",
+    "電話番号",
+    "メールアドレス",
+    "銀行名",
+    "支店名",
+    "口座種別",
+    "口座番号",
+    "口座名義",
     "メモ",
 ]
 
@@ -390,8 +401,11 @@ def upsert_employee(
     tax_type="甲",
     dependents_count=0,
     work_prefecture_name="",
+    address_postal_code="",
+    address_prefecture="",
     address_city="",
     address_detail="",
+    resident_tax_municipality="",
     birth_date=None,
     payment_schedule_id=None,
     hire_date=None,
@@ -401,20 +415,32 @@ def upsert_employee(
     department_id=None,
     position_id=None,
     employment_type_id=None,
+    name_kana="",
+    phone="",
+    email="",
+    bank_name="",
+    bank_branch_name="",
+    bank_account_type="",
+    bank_account_number="",
+    bank_account_holder="",
 ):
     cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO employees(
-          employee_code, name_kanji, department, payday_group,
+          employee_code, name_kanji, name_kana, department, payday_group,
           std_monthly_wage, std_pension_wage,
-          tax_type, dependents_count, work_prefecture_name, address_city, address_detail, birth_date,
+          tax_type, dependents_count, work_prefecture_name,
+          address_postal_code, address_prefecture, address_city, address_detail, resident_tax_municipality,
+          phone, email, bank_name, bank_branch_name, bank_account_type, bank_account_number, bank_account_holder,
+          birth_date,
           payment_schedule_id, hire_date, leave_date, retirement_processed, memo,
           department_id, position_id, employment_type_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_code) DO UPDATE SET
           name_kanji=excluded.name_kanji,
+          name_kana=excluded.name_kana,
           department=excluded.department,
           payday_group=excluded.payday_group,
           is_deleted=0,
@@ -424,8 +450,18 @@ def upsert_employee(
           tax_type=excluded.tax_type,
           dependents_count=excluded.dependents_count,
           work_prefecture_name=excluded.work_prefecture_name,
+          address_postal_code=excluded.address_postal_code,
+          address_prefecture=excluded.address_prefecture,
           address_city=excluded.address_city,
           address_detail=excluded.address_detail,
+          resident_tax_municipality=excluded.resident_tax_municipality,
+          phone=excluded.phone,
+          email=excluded.email,
+          bank_name=excluded.bank_name,
+          bank_branch_name=excluded.bank_branch_name,
+          bank_account_type=excluded.bank_account_type,
+          bank_account_number=excluded.bank_account_number,
+          bank_account_holder=excluded.bank_account_holder,
           birth_date=excluded.birth_date,
           payment_schedule_id=excluded.payment_schedule_id,
           hire_date=excluded.hire_date,
@@ -440,6 +476,7 @@ def upsert_employee(
         (
             employee_code,
             name_kanji,
+            name_kana,
             department,
             payday_group,
             std_health,
@@ -447,8 +484,18 @@ def upsert_employee(
             tax_type,
             dependents_count,
             work_prefecture_name,
+            address_postal_code,
+            address_prefecture,
             address_city,
             address_detail,
+            resident_tax_municipality,
+            phone,
+            email,
+            bank_name,
+            bank_branch_name,
+            bank_account_type,
+            bank_account_number,
+            bank_account_holder,
             birth_date,
             payment_schedule_id,
             hire_date,
@@ -468,7 +515,14 @@ def list_employees(conn, include_deleted: bool = False):
         cur.execute("SELECT * FROM employees ORDER BY employee_id DESC")
     else:
         cur.execute("SELECT * FROM employees WHERE COALESCE(is_deleted, 0) = 0 ORDER BY employee_id DESC")
-    return cur.fetchall()
+    rows = cur.fetchall()
+    result = []
+    for r in rows:
+        row = dict(r)
+        if row.get("department_id"):
+            row["department"] = get_department_full_name(conn, row["department_id"]) or row.get("department", "")
+        result.append(row)
+    return result
 
 def soft_delete_employee(conn, employee_id: int) -> bool:
     cur = conn.cursor()
@@ -525,6 +579,209 @@ def list_named_master(conn, table: str, include_inactive: bool = False):
     )
     return cur.fetchall()
 
+DEPARTMENT_TYPE_LABELS = {
+    "office": "事業所",
+    "department": "部署",
+    "section": "課・係",
+    "other": "その他",
+}
+DEPARTMENT_TYPE_REVERSE_LABELS = {label: key for key, label in DEPARTMENT_TYPE_LABELS.items()}
+
+def department_type_label(value: str | None) -> str:
+    return DEPARTMENT_TYPE_LABELS.get(value or "department", value or "部署")
+
+def list_department_hierarchy(conn, include_inactive: bool = False):
+    where = "" if include_inactive else "WHERE is_active = 1"
+    rows = conn.execute(
+        f"""
+        SELECT *,
+               COALESCE(parent_department_id, 0) AS parent_id,
+               COALESCE(department_type, 'department') AS type_value
+        FROM departments
+        {where}
+        ORDER BY is_active DESC, display_order ASC, id ASC
+        """
+    ).fetchall()
+    by_parent = {}
+    by_id = {}
+    for row in rows:
+        row_id = int(row["id"])
+        parent_id = row["parent_department_id"] if "parent_department_id" in row.keys() else None
+        by_parent.setdefault(int(parent_id or 0), []).append(row)
+        by_id[row_id] = row
+
+    ordered = []
+    visited = set()
+
+    def walk(parent_id: int, depth: int, path_names: list[str]):
+        for row in by_parent.get(parent_id, []):
+            row_id = int(row["id"])
+            if row_id in visited:
+                continue
+            visited.add(row_id)
+            name = row["name"] or ""
+            full_name = " > ".join([*path_names, name]) if path_names else name
+            parent_id_value = int(row["parent_department_id"] or 0) if "parent_department_id" in row.keys() else 0
+            ordered.append(
+                {
+                    "row": row,
+                    "id": row_id,
+                    "name": name,
+                    "display_name": f"{'  ' * depth}{name}",
+                    "full_name": full_name,
+                    "depth": depth,
+                    "parent_id": parent_id_value,
+                    "parent_name": " > ".join(path_names),
+                    "department_type": row["type_value"],
+                    "department_type_label": department_type_label(row["type_value"]),
+                    "is_active": int(row["is_active"] or 0),
+                    "memo": row["memo"] or "",
+                }
+            )
+            walk(row_id, depth + 1, [*path_names, name])
+
+    walk(0, 0, [])
+    for row in rows:
+        if int(row["id"]) not in visited:
+            walk(int(row["parent_department_id"] or 0), 0, [])
+            if int(row["id"]) not in visited:
+                name = row["name"] or ""
+                ordered.append(
+                    {
+                        "row": row,
+                        "id": int(row["id"]),
+                        "name": name,
+                        "display_name": name,
+                        "full_name": name,
+                        "depth": 0,
+                        "parent_id": int(row["parent_department_id"] or 0) if "parent_department_id" in row.keys() else 0,
+                        "parent_name": "",
+                        "department_type": row["type_value"],
+                        "department_type_label": department_type_label(row["type_value"]),
+                        "is_active": int(row["is_active"] or 0),
+                        "memo": row["memo"] or "",
+                    }
+                )
+                visited.add(int(row["id"]))
+    return ordered
+
+def get_department_descendant_ids(conn, department_id: int) -> set[int]:
+    rows = conn.execute("SELECT id, parent_department_id FROM departments").fetchall()
+    children = {}
+    for row in rows:
+        children.setdefault(int(row["parent_department_id"] or 0), []).append(int(row["id"]))
+    result = set()
+
+    def walk(row_id: int):
+        for child_id in children.get(row_id, []):
+            if child_id in result:
+                continue
+            result.add(child_id)
+            walk(child_id)
+
+    walk(int(department_id))
+    return result
+
+def move_department_display_order(conn, row_id: int, direction: str, include_inactive: bool = True) -> bool:
+    if direction not in {"up", "down"}:
+        raise ValueError("direction must be up or down")
+    selected = conn.execute(
+        "SELECT id, parent_department_id FROM departments WHERE id=?",
+        (row_id,),
+    ).fetchone()
+    if not selected:
+        return False
+    where = "" if include_inactive else "AND is_active = 1"
+    rows = conn.execute(
+        f"""
+        SELECT id, COALESCE(display_order, 0) AS display_order
+        FROM departments
+        WHERE COALESCE(parent_department_id, 0) = ?
+        {where}
+        ORDER BY is_active DESC, COALESCE(display_order, 0) ASC, id ASC
+        """,
+        (int(selected["parent_department_id"] or 0),),
+    ).fetchall()
+    for idx, row in enumerate(rows, start=1):
+        conn.execute("UPDATE departments SET display_order=?, updated_at=datetime('now') WHERE id=?", (idx * 10, row["id"]))
+    conn.commit()
+
+    rows = conn.execute(
+        f"""
+        SELECT id, COALESCE(display_order, 0) AS display_order
+        FROM departments
+        WHERE COALESCE(parent_department_id, 0) = ?
+        {where}
+        ORDER BY is_active DESC, COALESCE(display_order, 0) ASC, id ASC
+        """,
+        (int(selected["parent_department_id"] or 0),),
+    ).fetchall()
+    ids = [int(row["id"]) for row in rows]
+    try:
+        idx = ids.index(int(row_id))
+    except ValueError:
+        return False
+    target_idx = idx - 1 if direction == "up" else idx + 1
+    if target_idx < 0 or target_idx >= len(rows):
+        return False
+
+    current = rows[idx]
+    target = rows[target_idx]
+    conn.execute("UPDATE departments SET display_order=?, updated_at=datetime('now') WHERE id=?", (target["display_order"], current["id"]))
+    conn.execute("UPDATE departments SET display_order=?, updated_at=datetime('now') WHERE id=?", (current["display_order"], target["id"]))
+    conn.commit()
+    return True
+
+def upsert_department(conn, name: str, department_type: str = "department", parent_department_id=None,
+                      is_active: int = 1, memo=None, row_id=None):
+    department_type = department_type if department_type in DEPARTMENT_TYPE_LABELS else "department"
+    parent_id = int(parent_department_id) if parent_department_id else None
+    if row_id is not None:
+        row_id = int(row_id)
+        if parent_id == row_id or (parent_id and parent_id in get_department_descendant_ids(conn, row_id)):
+            raise ValueError("親所属に自分自身または配下の所属は選択できません。")
+
+    if row_id is None:
+        display_order = get_next_display_order(conn, "departments")
+        conn.execute(
+            """
+            INSERT INTO departments(name, department_type, parent_department_id, display_order, is_active, memo)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (name, department_type, parent_id, display_order, is_active, memo),
+        )
+    else:
+        current = conn.execute("SELECT display_order FROM departments WHERE id=?", (row_id,)).fetchone()
+        display_order = int(row_get(current, "display_order", 0) or 0)
+        conn.execute(
+            """
+            UPDATE departments
+            SET name=?, department_type=?, parent_department_id=?, display_order=?, is_active=?, memo=?, updated_at=datetime('now')
+            WHERE id=?
+            """,
+            (name, department_type, parent_id, display_order, is_active, memo, row_id),
+        )
+    conn.commit()
+
+def get_department_full_name(conn, department_id) -> str:
+    if not department_id:
+        return ""
+    names = {}
+    parents = {}
+    for item in list_department_hierarchy(conn, include_inactive=True):
+        names[item["id"]] = item["name"]
+        parents[item["id"]] = item["parent_id"]
+    current = int(department_id)
+    parts = []
+    visited = set()
+    while current and current not in visited:
+        visited.add(current)
+        name = names.get(current)
+        if name:
+            parts.append(name)
+        current = parents.get(current, 0)
+    return " > ".join(reversed(parts))
+
 def get_named_master_by_id(conn, table: str, row_id: int):
     if table not in {"departments", "positions", "employment_types"}:
         raise ValueError("invalid master table")
@@ -567,6 +824,52 @@ def get_next_display_order(conn, table: str) -> int:
     _validate_display_order_table(table)
     row = conn.execute(f"SELECT COALESCE(MAX(display_order), 0) AS max_order FROM {table}").fetchone()
     return int(row_get(row, "max_order", 0) or 0) + 10
+
+def remove_departments_name_unique_constraint(conn) -> None:
+    indexes = conn.execute("PRAGMA index_list(departments)").fetchall()
+    has_name_unique = False
+    for idx in indexes:
+        if not int(row_get(idx, "unique", 0) or 0):
+            continue
+        index_name = row_get(idx, "name", "")
+        cols = conn.execute(f"PRAGMA index_info({index_name})").fetchall()
+        if [row_get(col, "name", "") for col in cols] == ["name"]:
+            has_name_unique = True
+            break
+    if not has_name_unique:
+        return
+
+    conn.execute("ALTER TABLE departments RENAME TO departments_old")
+    conn.execute(
+        """
+        CREATE TABLE departments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          parent_department_id INTEGER,
+          department_type TEXT NOT NULL DEFAULT 'department',
+          display_order INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          memo TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO departments(
+          id, name, parent_department_id, department_type, display_order,
+          is_active, memo, created_at, updated_at
+        )
+        SELECT
+          id, name, parent_department_id, COALESCE(department_type, 'department'),
+          COALESCE(display_order, 0), COALESCE(is_active, 1), memo,
+          COALESCE(created_at, datetime('now')), COALESCE(updated_at, datetime('now'))
+        FROM departments_old
+        """
+    )
+    conn.execute("DROP TABLE departments_old")
+    conn.commit()
 
 def _display_order_rows(conn, table: str, include_inactive: bool = True):
     _validate_display_order_table(table)
@@ -1194,6 +1497,8 @@ def build_payroll_calculation_basis(conn, r) -> dict:
 
 def _row_with_calculation_basis(conn, r) -> dict:
     row = dict(r)
+    if row.get("department_id"):
+        row["department"] = get_department_full_name(conn, row["department_id"]) or row.get("department", "")
     basis = build_payroll_calculation_basis(conn, r)
     row["use_dynamic_items"] = 1 if basis["use_dynamic_items"] else 0
     row["dynamic_social_insurance_base"] = basis["social_insurance_base"]
@@ -1363,7 +1668,7 @@ def build_payroll_output_data(conn, payroll_or_row) -> dict:
         "employee_id": int(row_get(r, "employee_id", 0) or 0),
         "employee_code": row_get(r, "employee_code", "") or "",
         "employee_name": row_get(r, "name_kanji", "") or "",
-        "department_name": row_get(r, "department_name", "") or "",
+        "department_name": get_department_full_name(conn, row_get(r, "department_id", None)) or row_get(r, "department_name", "") or "",
         "position_name": row_get(r, "position_name", "") or "",
         "employment_type_name": row_get(r, "employment_type_name", "") or "",
         "target_month": target_month,
@@ -1464,6 +1769,7 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
     for row in rows:
         employee_code = _employee_csv_cell(row, "employee_code", "社員番号", "code")
         name_kanji = _employee_csv_cell(row, "name_kanji", "氏名", "name")
+        name_kana = _employee_csv_cell(row, "name_kana", "フリガナ")
         if not employee_code or not name_kanji:
             continue
 
@@ -1477,8 +1783,18 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
         tax_type = _employee_csv_cell(row, "tax_type", "源泉区分", "源泉", default="甲") or "甲"
         dependents_count = int(_employee_csv_cell(row, "dependents_count", "扶養人数", "扶養", default="0").replace(",", "") or 0)
         work_prefecture_name = _employee_csv_cell(row, "work_prefecture_name", "勤務地都道府県", "都道府県")
+        address_postal_code = _employee_csv_cell(row, "address_postal_code", "郵便番号")
+        address_prefecture = _employee_csv_cell(row, "address_prefecture", "住所都道府県")
         address_city = _employee_csv_cell(row, "address_city", "市区町村")
         address_detail = _employee_csv_cell(row, "address_detail", "住所", "それ以降の住所")
+        resident_tax_municipality = _employee_csv_cell(row, "resident_tax_municipality", "住民税市区町村")
+        phone = _employee_csv_cell(row, "phone", "電話番号")
+        email = _employee_csv_cell(row, "email", "メールアドレス")
+        bank_name = _employee_csv_cell(row, "bank_name", "銀行名")
+        bank_branch_name = _employee_csv_cell(row, "bank_branch_name", "支店名")
+        bank_account_type = _employee_csv_cell(row, "bank_account_type", "口座種別")
+        bank_account_number = _employee_csv_cell(row, "bank_account_number", "口座番号")
+        bank_account_holder = _employee_csv_cell(row, "bank_account_holder", "口座名義")
         birth_date = _normalize_employee_csv_date(_employee_csv_cell(row, "birth_date", "生年月日"))
         hire_date = _normalize_employee_csv_date(_employee_csv_cell(row, "hire_date", "入社日"))
         leave_date = _normalize_employee_csv_date(_employee_csv_cell(row, "leave_date", "退職日"))
@@ -1495,15 +1811,26 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
             std_pension,
             tax_type,
             dependents_count,
-            work_prefecture_name,
-            address_city,
-            address_detail,
-            birth_date,
-            payment_schedule_id,
-            hire_date,
-            leave_date,
-            retirement_processed,
-            memo,
+            work_prefecture_name=work_prefecture_name,
+            address_postal_code=address_postal_code,
+            address_prefecture=address_prefecture,
+            address_city=address_city,
+            address_detail=address_detail,
+            resident_tax_municipality=resident_tax_municipality,
+            birth_date=birth_date,
+            payment_schedule_id=payment_schedule_id,
+            hire_date=hire_date,
+            leave_date=leave_date,
+            retirement_processed=retirement_processed,
+            memo=memo,
+            name_kana=name_kana,
+            phone=phone,
+            email=email,
+            bank_name=bank_name,
+            bank_branch_name=bank_branch_name,
+            bank_account_type=bank_account_type,
+            bank_account_number=bank_account_number,
+            bank_account_holder=bank_account_holder,
         )
         imported += 1
     return imported
@@ -1515,6 +1842,7 @@ def list_employee_export_rows(conn) -> list[dict]:
             {
                 "社員番号": row_get(e, "employee_code", ""),
                 "氏名": row_get(e, "name_kanji", ""),
+                "フリガナ": row_get(e, "name_kana", "") or "",
                 "部署": row_get(e, "department", ""),
                 "給与支給方式": get_employee_payment_schedule_display(e, conn),
                 "給与支給方式ID": row_get(e, "payment_schedule_id", "") or "",
@@ -1528,8 +1856,18 @@ def list_employee_export_rows(conn) -> list[dict]:
                 "源泉": row_get(e, "tax_type", "甲") or "甲",
                 "扶養人数": row_get(e, "dependents_count", 0) or 0,
                 "都道府県": row_get(e, "work_prefecture_name", "") or "",
+                "郵便番号": row_get(e, "address_postal_code", "") or "",
+                "住所都道府県": row_get(e, "address_prefecture", "") or "",
                 "市区町村": row_get(e, "address_city", "") or "",
                 "住所": row_get(e, "address_detail", "") or "",
+                "住民税市区町村": row_get(e, "resident_tax_municipality", "") or "",
+                "電話番号": row_get(e, "phone", "") or "",
+                "メールアドレス": row_get(e, "email", "") or "",
+                "銀行名": row_get(e, "bank_name", "") or "",
+                "支店名": row_get(e, "bank_branch_name", "") or "",
+                "口座種別": row_get(e, "bank_account_type", "") or "",
+                "口座番号": row_get(e, "bank_account_number", "") or "",
+                "口座名義": row_get(e, "bank_account_holder", "") or "",
                 "メモ": row_get(e, "memo", "") or "",
             }
         )
@@ -2102,6 +2440,9 @@ def ensure_schema_migrations(conn):
     if not _column_exists(conn, "employees", "std_pension_wage"):
         conn.execute("ALTER TABLE employees ADD COLUMN std_pension_wage INTEGER NOT NULL DEFAULT 0")
 
+    if not _column_exists(conn, "employees", "name_kana"):
+        conn.execute("ALTER TABLE employees ADD COLUMN name_kana TEXT NOT NULL DEFAULT ''")
+
     if not _column_exists(conn, "employees", "tax_type"):
         conn.execute("ALTER TABLE employees ADD COLUMN tax_type TEXT NOT NULL DEFAULT '甲'")
     if not _column_exists(conn, "employees", "dependents_count"):
@@ -2109,10 +2450,27 @@ def ensure_schema_migrations(conn):
     
     if not _column_exists(conn, "employees", "work_prefecture_name"):
         conn.execute("ALTER TABLE employees ADD COLUMN work_prefecture_name TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "employees", "address_postal_code"):
+        conn.execute("ALTER TABLE employees ADD COLUMN address_postal_code TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "employees", "address_prefecture"):
+        conn.execute("ALTER TABLE employees ADD COLUMN address_prefecture TEXT NOT NULL DEFAULT ''")
     if not _column_exists(conn, "employees", "address_city"):
         conn.execute("ALTER TABLE employees ADD COLUMN address_city TEXT NOT NULL DEFAULT ''")
     if not _column_exists(conn, "employees", "address_detail"):
         conn.execute("ALTER TABLE employees ADD COLUMN address_detail TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "employees", "resident_tax_municipality"):
+        conn.execute("ALTER TABLE employees ADD COLUMN resident_tax_municipality TEXT NOT NULL DEFAULT ''")
+    for col in (
+        "phone",
+        "email",
+        "bank_name",
+        "bank_branch_name",
+        "bank_account_type",
+        "bank_account_number",
+        "bank_account_holder",
+    ):
+        if not _column_exists(conn, "employees", col):
+            conn.execute(f"ALTER TABLE employees ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
     # 生年月日（介護保険判定用）
     if not _column_exists(conn, "employees", "birth_date"):
@@ -2147,6 +2505,13 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE employees ADD COLUMN position_id INTEGER")
     if not _column_exists(conn, "employees", "employment_type_id"):
         conn.execute("ALTER TABLE employees ADD COLUMN employment_type_id INTEGER")
+
+    if _table_exists(conn, "departments"):
+        if not _column_exists(conn, "departments", "parent_department_id"):
+            conn.execute("ALTER TABLE departments ADD COLUMN parent_department_id INTEGER")
+        if not _column_exists(conn, "departments", "department_type"):
+            conn.execute("ALTER TABLE departments ADD COLUMN department_type TEXT NOT NULL DEFAULT 'department'")
+        remove_departments_name_unique_constraint(conn)
 
     conn.execute(
         """
@@ -2391,7 +2756,9 @@ def ensure_schema_migrations(conn):
         """
         CREATE TABLE IF NOT EXISTS departments (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          parent_department_id INTEGER,
+          department_type TEXT NOT NULL DEFAULT 'department',
           display_order INTEGER NOT NULL DEFAULT 0,
           is_active INTEGER NOT NULL DEFAULT 1,
           memo TEXT,
@@ -3528,7 +3895,7 @@ def _export_pay_deduct_report_month_transposed(conn, target_month: str, file_pat
             values.append(item_map.get(key, 0))
         return values
 
-    append_info_row("社員コード", [data["employee_code"] for data in output_rows])
+    append_info_row("社員番号", [data["employee_code"] for data in output_rows])
     append_info_row("氏名", [data["employee_name"] for data in output_rows])
     append_info_row("部署", [data["department_name"] for data in output_rows])
     append_info_row("役職", [data["position_name"] for data in output_rows])
@@ -3664,7 +4031,7 @@ def _export_pay_deduct_report_month_by_department(conn, target_month: str, file_
             cell.fill = header_fill
             cell.alignment = align_center
 
-        append_info_row(ws, "社員コード", [data["employee_code"] for data in rows])
+        append_info_row(ws, "社員番号", [data["employee_code"] for data in rows])
         append_info_row(ws, "氏名", [data["employee_name"] for data in rows])
         append_info_row(ws, "部署", [data["department_name"] for data in rows])
         append_info_row(ws, "役職", [data["position_name"] for data in rows])
@@ -3768,7 +4135,7 @@ def export_pay_deduct_report_month(conn, target_month: str, file_path: str) -> N
         title = f"{company_name}　{title}"
     ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=13)
 
-    headers = ["社員コード", "氏名", "部署", "役職", "雇用区分"]
+    headers = ["社員番号", "氏名", "部署", "役職", "雇用区分"]
     headers += [c["name"] for c in pay_columns]
     headers += ["総支給額", "課税支給額", "非課税支給額", "雇用保険対象額", "社会保険対象額"]
     headers += [c["name"] for c in system_columns]

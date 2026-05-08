@@ -8,6 +8,22 @@ from ui_window_utils import show_centered_window, enable_enter_key_navigation
 from utils_dates import compute_pay_date, parse_month
 
 
+def _format_year_month(value: str) -> str:
+    try:
+        year, month = str(value).split("-", 1)
+        return f"{int(year):04d} 年 {int(month):02d} 月"
+    except Exception:
+        return str(value or "")
+
+
+def _format_year_month_day(value: str) -> str:
+    try:
+        year, month, day = str(value).split("-", 2)
+        return f"{int(year):04d} 年 {int(month):02d} 月 {int(day):02d} 日"
+    except Exception:
+        return str(value or "")
+
+
 class PayrollBatchDialog(tk.Toplevel):
     """
     対象年月 + 支払日単位の社員明細一覧ダイアログ
@@ -33,8 +49,8 @@ class PayrollBatchDialog(tk.Toplevel):
 
         hdr = ttk.LabelFrame(self, text="対象")
         hdr.pack(fill="x", padx=10, pady=10)
-        ttk.Label(hdr, text=f"対象年月: {target_month}").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(hdr, text=f"支払日: {pay_date_applied}").grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text=f"対象年月: {_format_year_month(target_month)}").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text=f"支払日: {_format_year_month_day(pay_date_applied)}").grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
         self._build_matrix_area()
 
@@ -204,7 +220,7 @@ class PayrollBatchDialog(tk.Toplevel):
 
         corner_lbl = ttk.Label(
             self.header_frame,
-            text="項目",
+            text="社員番号\n名前",
             anchor="center",
             relief="solid",
             padding=4
@@ -224,7 +240,6 @@ class PayrollBatchDialog(tk.Toplevel):
                 borderwidth=1,
                 padx=6,
                 pady=6,
-                cursor="hand2",
                 bg="#d9edf7" if col_idx - 1 == self.selected_employee_index else "#f0f0f0",
             )
             lbl.grid(row=0, column=col_idx, sticky="nsew")

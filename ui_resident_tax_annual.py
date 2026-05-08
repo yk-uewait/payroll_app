@@ -192,10 +192,10 @@ class ResidentTaxAnnualFrame(ttk.Frame):
         cur.execute(
             """
             SELECT e.employee_id, e.employee_code, e.name_kanji,
-                   COALESCE(e.address_city, '') AS address_city
+                   COALESCE(NULLIF(e.resident_tax_municipality, ''), e.address_city, '') AS municipality
             FROM employees e
             WHERE COALESCE(e.is_deleted, 0) = 0
-            ORDER BY e.employee_id
+            ORDER BY municipality ASC, e.employee_code ASC, e.name_kanji ASC
             """
         )
         self.employees = cur.fetchall()
@@ -267,9 +267,9 @@ class ResidentTaxAnnualFrame(ttk.Frame):
         value_overrides = value_overrides or {}
 
         headers = [
-            ("社員コード", "employee_code"),
+            ("社員番号", "employee_code"),
             ("氏名", "name_kanji"),
-            ("市区町村", "address_city"),
+            ("市区町村", "municipality"),
             ("合計金額", "annual_total"),
         ]
         month_headers = [f"{int(m.split('-')[1])}月" for m in self.months]
@@ -290,7 +290,7 @@ class ResidentTaxAnnualFrame(ttk.Frame):
             values = [
                 employee["employee_code"],
                 employee["name_kanji"],
-                employee["address_city"],
+                employee["municipality"],
             ]
             for col, value in enumerate(values):
                 label = ttk.Label(self.grid_frame, text=value or "", relief="solid", padding=4)

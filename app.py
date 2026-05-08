@@ -123,7 +123,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        apply_safe_geometry(self, app_settings.get_window_geometry("main"))
+        apply_safe_geometry(self, app_settings.get_window_geometry("main"), top_ratio=0.10)
 
         self.conn = None
 
