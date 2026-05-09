@@ -264,3 +264,153 @@ def enable_enter_key_navigation(root_or_frame):
             walk(child)
 
     walk(root_or_frame)
+
+
+def setup_grid_treeview_style(widget):
+    style = ttk.Style(widget)
+    style.configure(
+        "ListGrid.Treeview",
+        rowheight=26,
+        borderwidth=1,
+        relief="solid",
+        background="#ffffff",
+        fieldbackground="#ffffff",
+        bordercolor="#d8dee6",
+        lightcolor="#edf1f5",
+        darkcolor="#d8dee6",
+    )
+    style.configure(
+        "ListGrid.Treeview.Heading",
+        padding=(6, 5),
+        relief="solid",
+        borderwidth=1,
+        background="#f3f5f7",
+        bordercolor="#d8dee6",
+        lightcolor="#edf1f5",
+        darkcolor="#d8dee6",
+    )
+    style.map(
+        "ListGrid.Treeview",
+        background=[("selected", "#dbeafe")],
+        foreground=[("selected", "#111827")],
+    )
+
+
+def _treeview_display_columns(tree):
+    display_columns = tree["displaycolumns"]
+    if display_columns in ("#all", "", None):
+        return list(tree["columns"])
+    display_columns = list(display_columns)
+    if display_columns == ["#all"]:
+        return list(tree["columns"])
+    return display_columns
+
+
+def _first_visible_treeview_item_bbox(tree, col):
+    for item_id in tree.get_children(""):
+        bbox = tree.bbox(item_id, col)
+        if bbox:
+            return bbox
+    return None
+
+
+def _update_treeview_grid_lines(tree):
+    if not tree.winfo_exists():
+        return
+    display_columns = _treeview_display_columns(tree)
+    lines = getattr(tree, "_grid_column_lines", [])
+    needed = max(0, len(display_columns) - 1)
+    while len(lines) < needed:
+        line = tk.Frame(tree, bg="#e5e7eb", width=1)
+
+        def select_row(event, t=tree):
+            y = event.widget.winfo_y() + event.y
+            row_id = t.identify_row(y)
+            if row_id:
+                t.selection_set(row_id)
+                t.focus(row_id)
+            return "break"
+
+        def double_click(event, t=tree):
+            y = event.widget.winfo_y() + event.y
+            row_id = t.identify_row(y)
+            if row_id:
+                t.selection_set(row_id)
+                t.focus(row_id)
+                t.event_generate("<Double-1>", x=1, y=y)
+            return "break"
+
+        def mousewheel(event, t=tree):
+            try:
+                t.event_generate("<MouseWheel>", delta=event.delta)
+            except tk.TclError:
+                pass
+            return "break"
+
+        line.bind("<Button-1>", select_row)
+        line.bind("<Double-1>", double_click)
+        line.bind("<MouseWheel>", mousewheel)
+        lines.append(line)
+    tree._grid_column_lines = lines
+    for line in lines[needed:]:
+        line.place_forget()
+
+    if not tree.get_children(""):
+        for line in lines:
+            line.place_forget()
+        return
+
+    first_bbox = _first_visible_treeview_item_bbox(tree, display_columns[0]) if display_columns else None
+    y_start = first_bbox[1] if first_bbox else 24
+    line_height = max(0, tree.winfo_height() - y_start)
+    if line_height <= 0:
+        return
+
+    total_width = sum(int(tree.column(col, "width")) for col in display_columns)
+    x_offset = int(total_width * tree.xview()[0]) if total_width > 0 else 0
+    x_pos = 0
+    for idx, col in enumerate(display_columns[:-1]):
+        bbox = _first_visible_treeview_item_bbox(tree, col)
+        if bbox:
+            x = bbox[0] + bbox[2] - 1
+        else:
+            x_pos += int(tree.column(col, "width"))
+            x = x_pos - x_offset - 1
+        line = lines[idx]
+        if 0 <= x <= tree.winfo_width():
+            line.place(x=x, y=y_start, width=1, height=line_height)
+            line.lift()
+        else:
+            line.place_forget()
+
+
+def refresh_grid_treeview(tree):
+    for index, item_id in enumerate(tree.get_children("")):
+        tree.item(item_id, tags=("row_even" if index % 2 else "row_odd",))
+    tree.after_idle(lambda: _update_treeview_grid_lines(tree))
+
+
+def apply_grid_treeview_style(tree, xscroll=None):
+    setup_grid_treeview_style(tree)
+    tree.configure(style="ListGrid.Treeview")
+    tree.tag_configure("row_odd", background="#ffffff")
+    tree.tag_configure("row_even", background="#f8fafc")
+    if not hasattr(tree, "_grid_column_lines"):
+        tree._grid_column_lines = []
+    if xscroll is not None:
+        def on_xscroll(*args):
+            tree.xview(*args)
+            tree.after_idle(lambda: _update_treeview_grid_lines(tree))
+
+        def set_xscroll(first, last):
+            xscroll.set(first, last)
+            tree.after_idle(lambda: _update_treeview_grid_lines(tree))
+
+        xscroll.configure(command=on_xscroll)
+        tree.configure(xscrollcommand=set_xscroll)
+
+    tree.bind("<Configure>", lambda _e: tree.after_idle(lambda: _update_treeview_grid_lines(tree)), add="+")
+    tree.bind("<ButtonPress-1>", lambda _e: tree.after_idle(lambda: _update_treeview_grid_lines(tree)), add="+")
+    tree.bind("<B1-Motion>", lambda _e: tree.after_idle(lambda: _update_treeview_grid_lines(tree)), add="+")
+    tree.bind("<ButtonRelease-1>", lambda _e: tree.after_idle(lambda: _update_treeview_grid_lines(tree)), add="+")
+    tree.after_idle(lambda: _update_treeview_grid_lines(tree))

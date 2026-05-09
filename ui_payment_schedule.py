@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 
 CLOSING_MODE_MAP = {
     "same_month": "当月",
@@ -173,6 +173,7 @@ class PaymentScheduleFrame(ttk.Frame):
         self.tree.column("closing_mode", width=70, anchor="center", stretch=False)
         self.tree.column("pay_day", width=70, anchor="center", stretch=False)
         self.tree.column("memo", width=220, anchor="w", stretch=True)
+        apply_grid_treeview_style(self.tree)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
@@ -209,6 +210,7 @@ class PaymentScheduleFrame(ttk.Frame):
                     (r["memo"] if "memo" in r.keys() else "") or "",
                 ),
             )
+        refresh_grid_treeview(self.tree)
 
     def _selected_id(self):
         sel = self.tree.selection()

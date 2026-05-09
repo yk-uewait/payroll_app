@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import db
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 
 
 ITEM_KIND_LABELS = {
@@ -177,6 +177,7 @@ class NamedMasterFrame(ttk.Frame):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=width, anchor=anchor, stretch=(col == "memo"))
         self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        apply_grid_treeview_style(self.tree)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
 
         btns = ttk.Frame(self)
@@ -195,6 +196,7 @@ class NamedMasterFrame(ttk.Frame):
             self.tree.delete(item)
         for r in db.list_named_master(self.conn, self.table, include_inactive=True):
             self.tree.insert("", "end", iid=str(r["id"]), values=(r["id"], r["name"], "○" if r["is_active"] else "", r["memo"] or ""))
+        refresh_grid_treeview(self.tree)
         if select_id is not None and self.tree.exists(str(select_id)):
             self.tree.selection_set(str(select_id))
             self.tree.see(str(select_id))
@@ -384,6 +386,7 @@ class DepartmentMasterFrame(ttk.Frame):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=width, anchor=anchor, stretch=(col == "memo"))
         self.tree.pack(fill="both", expand=True, padx=10, pady=(4, 5))
+        apply_grid_treeview_style(self.tree)
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
 
         btns = ttk.Frame(self)
@@ -414,6 +417,7 @@ class DepartmentMasterFrame(ttk.Frame):
                     item["memo"],
                 ),
             )
+        refresh_grid_treeview(self.tree)
         if select_id is not None and self.tree.exists(str(select_id)):
             self.tree.selection_set(str(select_id))
             self.tree.see(str(select_id))
@@ -553,6 +557,7 @@ class PayrollCategoryFrame(ttk.Frame):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=width, anchor=anchor, stretch=(col == "memo"))
         self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        apply_grid_treeview_style(self.tree)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         self._buttons()
         self.refresh()
@@ -584,6 +589,7 @@ class PayrollCategoryFrame(ttk.Frame):
                     r["memo"] or "",
                 ),
             )
+        refresh_grid_treeview(self.tree)
         if select_id is not None and self.tree.exists(str(select_id)):
             self.tree.selection_set(str(select_id))
             self.tree.see(str(select_id))
@@ -769,6 +775,7 @@ class PayrollItemFrame(ttk.Frame):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=width, anchor=anchor, stretch=(col in {"name", "category", "memo"}))
         self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        apply_grid_treeview_style(self.tree)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
@@ -802,6 +809,7 @@ class PayrollItemFrame(ttk.Frame):
                     r["memo"] or "",
                 ),
             )
+        refresh_grid_treeview(self.tree)
         if select_id is not None and self.tree.exists(str(select_id)):
             self.tree.selection_set(str(select_id))
             self.tree.see(str(select_id))
@@ -842,10 +850,11 @@ class PayrollItemFrame(ttk.Frame):
 
 
 class EmployeeStandardValueDialog(tk.Toplevel):
-    def __init__(self, parent, conn, on_saved=None):
+    def __init__(self, parent, conn, row=None, on_saved=None):
         super().__init__(parent)
         self.withdraw()
         self.conn = conn
+        self.row = row
         self.on_saved = on_saved
         self.title("社員別標準金額")
         self.transient(parent)
@@ -869,20 +878,22 @@ class EmployeeStandardValueDialog(tk.Toplevel):
 
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill="both", expand=True)
-        for row, (label, widget) in enumerate([
+        for row_index, (label, widget) in enumerate([
             ("社員", ttk.Combobox(frm, textvariable=self.var_employee, values=[x[0] for x in self.employee_options], width=30, state="readonly")),
             ("項目", ttk.Combobox(frm, textvariable=self.var_item, values=[x[0] for x in self.item_options], width=30, state="readonly")),
             ("開始月", ttk.Entry(frm, textvariable=self.var_start, width=10)),
             ("金額", ttk.Entry(frm, textvariable=self.var_amount, width=14, justify="right")),
             ("メモ", ttk.Entry(frm, textvariable=self.var_memo, width=34)),
         ]):
-            ttk.Label(frm, text=label).grid(row=row, column=0, padx=5, pady=5, sticky="w")
-            widget.grid(row=row, column=1, padx=5, pady=5, sticky="w")
+            ttk.Label(frm, text=label).grid(row=row_index, column=0, padx=5, pady=5, sticky="w")
+            widget.grid(row=row_index, column=1, padx=5, pady=5, sticky="w")
         ttk.Checkbutton(frm, text="有効", variable=self.var_active).grid(row=5, column=1, padx=5, pady=5, sticky="w")
         btns = ttk.Frame(frm)
         btns.grid(row=6, column=0, columnspan=2, padx=5, pady=(10, 0), sticky="e")
         ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
+        if row:
+            self._load_row(row)
         enable_enter_key_navigation(self)
         show_centered_window(self, parent)
 
@@ -892,6 +903,20 @@ class EmployeeStandardValueDialog(tk.Toplevel):
             if label == selected:
                 return row_id
         return None
+
+    def _set_selected_id(self, var, options, row_id):
+        for label, option_id in options:
+            if int(option_id) == int(row_id):
+                var.set(label)
+                return
+
+    def _load_row(self, row):
+        self._set_selected_id(self.var_employee, self.employee_options, row["employee_id"])
+        self._set_selected_id(self.var_item, self.item_options, row["item_id"])
+        self.var_start.set(row["start_month"] or "")
+        self.var_amount.set(f'{int(row["amount"] or 0):,}')
+        self.var_active.set(int(row["is_active"] or 0))
+        self.var_memo.set(row["memo"] or "")
 
     def save(self):
         employee_id = self._selected_id(self.var_employee, self.employee_options)
@@ -917,6 +942,12 @@ class EmployeeStandardValueDialog(tk.Toplevel):
             int(self.var_active.get() or 0),
             self.var_memo.get().strip() or None,
         )
+        if self.row and (
+            int(self.row["employee_id"]) != int(employee_id)
+            or int(self.row["item_id"]) != int(item_id)
+            or str(self.row["start_month"] or "") != start_month
+        ):
+            db.delete_employee_payroll_item_standard_value(self.conn, int(self.row["id"]))
         if callable(self.on_saved):
             self.on_saved()
         self.close()
@@ -933,7 +964,13 @@ class EmployeeStandardValueFrame(ttk.Frame):
     def __init__(self, master, conn):
         super().__init__(master)
         self.conn = conn
-        self.tree = ttk.Treeview(self, columns=("employee", "item", "start", "amount", "active", "memo"), show="headings", height=12)
+        self.tree = ttk.Treeview(
+            self,
+            columns=("id", "employee_id", "item_id", "employee", "item", "start", "amount", "active", "memo"),
+            displaycolumns=("employee", "item", "start", "amount", "active", "memo"),
+            show="headings",
+            height=12,
+        )
         for col, label, width, anchor in [
             ("employee", "社員", 170, "w"),
             ("item", "項目", 170, "w"),
@@ -945,10 +982,14 @@ class EmployeeStandardValueFrame(ttk.Frame):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=width, anchor=anchor, stretch=(col == "memo"))
         self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        apply_grid_treeview_style(self.tree)
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
+        ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="削除", command=self.delete_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
+        self.tree.bind("<Double-1>", lambda _event: self.edit_selected())
         self.refresh()
         enable_enter_key_navigation(self)
 
@@ -961,6 +1002,9 @@ class EmployeeStandardValueFrame(ttk.Frame):
                     "",
                     "end",
                     values=(
+                        r["id"],
+                        employee["employee_id"],
+                        r["item_id"],
                         f'{employee["employee_code"]} {employee["name_kanji"]}',
                         r["item_name"],
                         r["start_month"],
@@ -969,7 +1013,43 @@ class EmployeeStandardValueFrame(ttk.Frame):
                         r["memo"] or "",
                     ),
                 )
+        refresh_grid_treeview(self.tree)
 
     def add(self):
         dlg = EmployeeStandardValueDialog(self, self.conn, on_saved=self.refresh)
         self.wait_window(dlg)
+
+    def _selected_row(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        vals = self.tree.item(sel[0], "values")
+        if not vals:
+            return None
+        return {
+            "id": int(vals[0]),
+            "employee_id": int(vals[1]),
+            "item_id": int(vals[2]),
+            "start_month": vals[5],
+            "amount": int(str(vals[6] or "0").replace(",", "")),
+            "is_active": 1 if vals[7] else 0,
+            "memo": vals[8] or "",
+        }
+
+    def edit_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showwarning("確認", "編集する行を選択してください。", parent=self)
+            return
+        dlg = EmployeeStandardValueDialog(self, self.conn, row=row, on_saved=self.refresh)
+        self.wait_window(dlg)
+
+    def delete_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showwarning("確認", "削除する行を選択してください。", parent=self)
+            return
+        if not messagebox.askyesno("削除確認", "選択した標準金額設定を削除しますか？", parent=self):
+            return
+        db.delete_employee_payroll_item_standard_value(row["id"])
+        self.refresh()

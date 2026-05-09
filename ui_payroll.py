@@ -9,7 +9,7 @@ import db
 from utils_dates import parse_month, compute_pay_date
 
 from payroll_batch_dialog import PayrollBatchDialog
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 
 
 class WageLedgerExportOptionsDialog(tk.Toplevel):
@@ -143,7 +143,7 @@ class PayrollFrame(ttk.Frame):
             yscrollcommand=yscroll.set,
         )
 
-        xscroll.config(command=self.tree.xview)
+        apply_grid_treeview_style(self.tree, xscroll=xscroll)
         yscroll.config(command=self.tree.yview)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -390,6 +390,7 @@ class PayrollFrame(ttk.Frame):
                 values.append(v)
 
             self.tree.insert("", "end", values=tuple(values))
+        refresh_grid_treeview(self.tree)
 
     def _get_display_basis_key(self) -> str:
         label = (self.var_display_basis.get() or "").strip()

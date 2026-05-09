@@ -4,7 +4,7 @@ import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 from utils_rates import parse_percent_to_rate, format_rate_to_percent_text
 
 
@@ -256,7 +256,7 @@ class SocialRateDialog(tk.Toplevel):
         self.withdraw()
         self.conn = conn
         self.title("社会保険料率の設定")
-        self.geometry("840x325")
+        self.geometry("840x380")
         self.transient(master)
         self.grab_set()
 
@@ -268,7 +268,7 @@ class SocialRateDialog(tk.Toplevel):
             columns=("start_month", "start_month_display", "pref", "health", "child", "pension", "care", "note"),
             displaycolumns=("start_month_display", "pref", "health", "child", "pension", "care", "note"),
             show="headings",
-            height=10,
+            height=8,
         )
 
         for c, t, w in [
@@ -288,6 +288,7 @@ class SocialRateDialog(tk.Toplevel):
             else:
                 anchor = "center"
             self.tree.column(c, width=w, anchor=anchor, stretch=(c == "note"))
+        apply_grid_treeview_style(self.tree)
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.edit_selected())
 
@@ -328,6 +329,7 @@ class SocialRateDialog(tk.Toplevel):
                     r["note"] or "",
                 ),
             )
+        refresh_grid_treeview(self.tree)
 
     def _selected_key(self):
         sel = self.tree.selection()

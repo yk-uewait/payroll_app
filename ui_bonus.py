@@ -8,7 +8,7 @@ from datetime import date
 import db
 from utils_dates import parse_month
 from bonus_batch_dialog import BonusBatchDialog
-from ui_window_utils import show_centered_window, enable_enter_key_navigation
+from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 
 class BonusEditorDialog(tk.Toplevel):
     """賞与 追加/編集（モーダル）"""
@@ -175,7 +175,7 @@ class BonusFrame(ttk.Frame):
             xscrollcommand=xscroll.set,
             yscrollcommand=yscroll.set,
         )
-        xscroll.config(command=self.tree.xview)
+        apply_grid_treeview_style(self.tree, xscroll=xscroll)
         yscroll.config(command=self.tree.yview)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -312,6 +312,7 @@ class BonusFrame(ttk.Frame):
                 fmt_yen(r["total_withholding_tax"] or 0),
                 fmt_yen(r["total_net_amount"] or 0),
             ))
+        refresh_grid_treeview(self.tree)
 
     def _selected_batch(self):
         sel = self.tree.selection()

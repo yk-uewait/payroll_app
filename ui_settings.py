@@ -202,7 +202,7 @@ class SettingsFrame(ttk.Frame):
             title="役職マスタ",
             frame_class=lambda parent, conn: NamedMasterFrame(parent, conn, "positions", "役職マスタ"),
             conn=self.conn,
-            geometry="650x420",
+            geometry="480x420",
         )
         win.focus()
 
@@ -212,7 +212,7 @@ class SettingsFrame(ttk.Frame):
             title="雇用区分マスタ",
             frame_class=lambda parent, conn: NamedMasterFrame(parent, conn, "employment_types", "雇用区分マスタ"),
             conn=self.conn,
-            geometry="650x420",
+            geometry="480x420",
         )
         win.focus()
 

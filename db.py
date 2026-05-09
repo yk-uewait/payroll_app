@@ -1183,6 +1183,12 @@ def list_employee_payroll_item_standard_values(conn, employee_id: int):
     )
     return cur.fetchall()
 
+def delete_employee_payroll_item_standard_value(conn, row_id: int) -> bool:
+    cur = conn.cursor()
+    cur.execute("DELETE FROM employee_payroll_item_standard_values WHERE id = ?", (row_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
 def upsert_payroll_monthly_item_value(conn, monthly_id: int, employee_id: int, year: int, month: int,
                                       item_id: int, item_kind: str, amount: int, source: str = "manual",
                                       is_locked: int = 0, memo=None, commit: bool = True):

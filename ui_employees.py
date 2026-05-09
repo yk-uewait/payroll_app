@@ -603,8 +603,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.btn_prev_employee.pack(side="left", padx=(0, 8))
         self.btn_next_employee = ttk.Button(btns, text="次社員へ", command=lambda: self._move_employee(1))
         self.btn_next_employee.pack(side="left")
-        ttk.Button(btns, text="保存", command=self.save).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="right")
+        ttk.Button(btns, text="保存", command=self.save).pack(side="right", padx=(0, 8))
 
     def _create_scroll_tab(self, title):
         tab = ttk.Frame(self.notebook)
