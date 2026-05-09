@@ -199,6 +199,49 @@ def row_get(r, key, default=None):
         
 WITHHOLDING_YEAR_DEFAULT = 2026  # 令和8年
 
+def normalize_employee_code(employee_code) -> str:
+    code = str(employee_code or "").strip()
+    if not code:
+        raise ValueError("社員番号を入力してください。")
+    if not code.isdigit():
+        raise ValueError("社員番号は数字で入力してください。")
+    if len(code) > 5:
+        raise ValueError("社員番号は5桁以内で入力してください。")
+    number = int(code)
+    if number < 1 or number > 99999:
+        raise ValueError("社員番号は1〜99999の範囲で入力してください。")
+    return f"{number:05d}"
+
+def _normalize_existing_employee_codes(conn):
+    rows = conn.execute(
+        """
+        SELECT employee_id, employee_code
+        FROM employees
+        WHERE employee_code IS NOT NULL AND TRIM(employee_code) <> ''
+        """
+    ).fetchall()
+    targets = {}
+    for row in rows:
+        raw = str(row["employee_code"]).strip()
+        if raw.isdigit() and len(raw) <= 5 and 1 <= int(raw) <= 99999:
+            normalized = f"{int(raw):05d}"
+            targets.setdefault(normalized, []).append((int(row["employee_id"]), raw))
+
+    conflicted = {
+        code
+        for code, items in targets.items()
+        if len({raw for _employee_id, raw in items}) > 1
+    }
+    for normalized, items in targets.items():
+        if normalized in conflicted:
+            continue
+        for employee_id, raw in items:
+            if raw != normalized:
+                conn.execute(
+                    "UPDATE employees SET employee_code = ?, updated_at = datetime('now') WHERE employee_id = ?",
+                    (normalized, employee_id),
+                )
+
 # Dynamic payroll item migration flags.
 # Keep tax/insurance calculations on the legacy fixed-column path until each
 # area is verified in a later phase.
@@ -432,6 +475,7 @@ def upsert_employee(
     is_social_insurance_target=0,
     is_employment_insurance_target=1,
 ):
+    employee_code = normalize_employee_code(employee_code)
     cur = conn.cursor()
     cur.execute(
         """
@@ -533,9 +577,28 @@ def upsert_employee(
 def list_employees(conn, include_deleted: bool = False):
     cur = conn.cursor()
     if include_deleted:
-        cur.execute("SELECT * FROM employees ORDER BY employee_id DESC")
+        cur.execute(
+            """
+            SELECT *
+            FROM employees
+            ORDER BY
+              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
+              employee_code,
+              employee_id
+            """
+        )
     else:
-        cur.execute("SELECT * FROM employees WHERE COALESCE(is_deleted, 0) = 0 ORDER BY employee_id DESC")
+        cur.execute(
+            """
+            SELECT *
+            FROM employees
+            WHERE COALESCE(is_deleted, 0) = 0
+            ORDER BY
+              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
+              employee_code,
+              employee_id
+            """
+        )
     rows = cur.fetchall()
     result = []
     for r in rows:
@@ -2559,6 +2622,8 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE employees ADD COLUMN position_id INTEGER")
     if not _column_exists(conn, "employees", "employment_type_id"):
         conn.execute("ALTER TABLE employees ADD COLUMN employment_type_id INTEGER")
+
+    _normalize_existing_employee_codes(conn)
 
     if _table_exists(conn, "departments"):
         if not _column_exists(conn, "departments", "parent_department_id"):

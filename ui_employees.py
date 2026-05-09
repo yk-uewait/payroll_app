@@ -375,7 +375,13 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
         self._reset_dirty_state()
 
     def save(self):
-        code = self.var_code.get().strip()
+        import db
+        try:
+            code = db.normalize_employee_code(self.var_code.get())
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e), parent=self)
+            return
+        self.var_code.set(code)
         name = self.var_name.get().strip()
         department_id = self._selected_master_id(self.var_department_id, self.department_options)
         position_id = self._selected_master_id(self.var_position_id, self.position_options)
@@ -441,7 +447,20 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
                 messagebox.showerror("入力エラー", "入社日は生年月日より後の日付を入力してください。")
                 return
 
-        import db
+        duplicate = self.conn.execute(
+            """
+            SELECT employee_id
+            FROM employees
+            WHERE employee_code = ?
+              AND COALESCE(is_deleted, 0) = 0
+              AND (? IS NULL OR employee_id <> ?)
+            """,
+            (code, self.employee_id, self.employee_id),
+        ).fetchone()
+        if duplicate:
+            messagebox.showerror("入力エラー", "同じ社員番号の社員が既に登録されています。", parent=self)
+            return
+
         db.upsert_employee(
             self.conn,
             code, name, dept, 0,
@@ -1030,7 +1049,7 @@ class EmployeeEditorDialog(tk.Toplevel):
             FROM employees
             WHERE {where_sql}
             ORDER BY
-              CASE WHEN employee_code GLOB '[0-9]*' THEN CAST(employee_code AS INTEGER) ELSE NULL END,
+              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
               employee_code,
               employee_id
             """
@@ -1176,7 +1195,13 @@ class EmployeeEditorDialog(tk.Toplevel):
         self._update_navigation_buttons()
 
     def save(self):
-        code = self.var_code.get().strip()
+        import db
+        try:
+            code = db.normalize_employee_code(self.var_code.get())
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e), parent=self)
+            return
+        self.var_code.set(code)
         name = self.var_name.get().strip()
         department_id = self._selected_master_id(self.var_department_id, self.department_options)
         position_id = self._selected_master_id(self.var_position_id, self.position_options)
@@ -1239,7 +1264,20 @@ class EmployeeEditorDialog(tk.Toplevel):
                 messagebox.showerror("入力エラー", "入社日は生年月日より後の日付を入力してください。")
                 return
 
-        import db
+        duplicate = self.conn.execute(
+            """
+            SELECT employee_id
+            FROM employees
+            WHERE employee_code = ?
+              AND COALESCE(is_deleted, 0) = 0
+              AND (? IS NULL OR employee_id <> ?)
+            """,
+            (code, self.employee_id, self.employee_id),
+        ).fetchone()
+        if duplicate:
+            messagebox.showerror("入力エラー", "同じ社員番号の社員が既に登録されています。", parent=self)
+            return
+
         db.upsert_employee(
             self.conn,
             code,
@@ -1311,7 +1349,7 @@ class EmployeeEditorDialog(tk.Toplevel):
 
 class EmployeesFrame(ttk.Frame):
     COLUMNS = ("id", "code", "name", "dept", "pref", "city", "address", "payday", "birth_date", "tax_type", "deps", "memo")
-    DISPLAY_COLUMNS = ("code", "name", "dept", "pref", "city", "address", "payday", "birth_date", "tax_type", "deps", "memo")
+    DISPLAY_COLUMNS = ("code", "name", "dept", "payday", "birth_date", "tax_type", "deps", "memo")
 
     def __init__(self, master, conn):
         super().__init__(master)
@@ -1574,6 +1612,8 @@ class EmployeesFrame(ttk.Frame):
 
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._setup_list_treeview_style()
+        self._tree_column_lines = []
         self.tree = self._build_tree(tree_frame)
         self.trees = {key: self.tree for key in ("active", "leave", "retired", "all")}
 
@@ -1587,8 +1627,37 @@ class EmployeesFrame(ttk.Frame):
         self.refresh()
         enable_enter_key_navigation(self)
 
+    def _setup_list_treeview_style(self):
+        style = ttk.Style(self)
+        style.configure(
+            "ListGrid.Treeview",
+            rowheight=26,
+            borderwidth=1,
+            relief="solid",
+            background="#ffffff",
+            fieldbackground="#ffffff",
+            bordercolor="#d8dee6",
+            lightcolor="#edf1f5",
+            darkcolor="#d8dee6",
+        )
+        style.configure(
+            "ListGrid.Treeview.Heading",
+            padding=(6, 5),
+            relief="solid",
+            borderwidth=1,
+            background="#f3f5f7",
+            bordercolor="#d8dee6",
+            lightcolor="#edf1f5",
+            darkcolor="#d8dee6",
+        )
+        style.map(
+            "ListGrid.Treeview",
+            background=[("selected", "#dbeafe")],
+            foreground=[("selected", "#111827")],
+        )
+
     def _build_tree(self, parent):
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(parent, padding=1, relief="solid", borderwidth=1)
         frame.pack(fill="both", expand=True)
         tree = ttk.Treeview(
             frame,
@@ -1596,10 +1665,23 @@ class EmployeesFrame(ttk.Frame):
             displaycolumns=self.DISPLAY_COLUMNS,
             show="headings",
             height=12,
+            style="ListGrid.Treeview",
         )
+        tree.tag_configure("row_odd", background="#ffffff")
+        tree.tag_configure("row_even", background="#f8fafc")
         y_scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-        x_scroll = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
-        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        x_scroll = ttk.Scrollbar(frame, orient="horizontal")
+
+        def on_xscroll(*args):
+            tree.xview(*args)
+            self.after_idle(self._update_tree_column_lines)
+
+        def set_xscroll(first, last):
+            x_scroll.set(first, last)
+            self.after_idle(self._update_tree_column_lines)
+
+        x_scroll.configure(command=on_xscroll)
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=set_xscroll)
         for c, t, w in [
             ("id", "ID", 60),
             ("code", "社員番号", 76),
@@ -1624,7 +1706,84 @@ class EmployeesFrame(ttk.Frame):
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
         tree.bind("<Double-1>", self.on_double_click)
+        tree.bind("<Configure>", lambda _e: self.after_idle(self._update_tree_column_lines), add="+")
+        tree.bind("<ButtonPress-1>", lambda _e: self.after_idle(self._update_tree_column_lines), add="+")
+        tree.bind("<B1-Motion>", lambda _e: self.after_idle(self._update_tree_column_lines), add="+")
+        tree.bind("<ButtonRelease-1>", lambda _e: self.after_idle(self._update_tree_column_lines), add="+")
         return tree
+
+    def _first_visible_tree_item_bbox(self, col):
+        for item_id in self.tree.get_children(""):
+            bbox = self.tree.bbox(item_id, col)
+            if bbox:
+                return bbox
+        return None
+
+    def _select_tree_row_at_y(self, y):
+        row_id = self.tree.identify_row(y)
+        if row_id:
+            self.tree.selection_set(row_id)
+            self.tree.focus(row_id)
+        return row_id
+
+    def _on_tree_column_line_click(self, event):
+        y = event.widget.winfo_y() + event.y
+        self._select_tree_row_at_y(y)
+        return "break"
+
+    def _on_tree_column_line_double_click(self, event):
+        y = event.widget.winfo_y() + event.y
+        row_id = self._select_tree_row_at_y(y)
+        if row_id:
+            vals = self.tree.item(row_id, "values")
+            if vals:
+                self.open_editor(int(vals[0]))
+        return "break"
+
+    def _on_tree_column_line_mousewheel(self, event):
+        self.tree.event_generate("<MouseWheel>", delta=event.delta)
+        return "break"
+
+    def _update_tree_column_lines(self):
+        if not hasattr(self, "tree"):
+            return
+        tree = self.tree
+        if not tree.winfo_exists():
+            return
+
+        display_columns = list(self.DISPLAY_COLUMNS)
+        needed = max(0, len(display_columns) - 1)
+        while len(self._tree_column_lines) < needed:
+            line = tk.Frame(tree, bg="#e5e7eb", width=1, cursor="")
+            line.bind("<Button-1>", self._on_tree_column_line_click)
+            line.bind("<Double-1>", self._on_tree_column_line_double_click)
+            line.bind("<MouseWheel>", self._on_tree_column_line_mousewheel)
+            self._tree_column_lines.append(line)
+        for line in self._tree_column_lines[needed:]:
+            line.place_forget()
+
+        first_bbox = self._first_visible_tree_item_bbox(display_columns[0]) if display_columns else None
+        y_start = first_bbox[1] if first_bbox else 24
+        line_height = max(0, tree.winfo_height() - y_start)
+        if line_height <= 0:
+            return
+
+        total_width = sum(int(tree.column(col, "width")) for col in display_columns)
+        x_offset = int(total_width * tree.xview()[0]) if total_width > 0 else 0
+        x_pos = 0
+        for idx, col in enumerate(display_columns[:-1]):
+            bbox = self._first_visible_tree_item_bbox(col)
+            if bbox:
+                x = bbox[0] + bbox[2] - 1
+            else:
+                x_pos += int(tree.column(col, "width"))
+                x = x_pos - x_offset - 1
+            line = self._tree_column_lines[idx]
+            if 0 <= x <= tree.winfo_width():
+                line.place(x=x, y=y_start, width=1, height=line_height)
+                line.lift()
+            else:
+                line.place_forget()
 
     def _employee_status(self, row):
         if int(row.get("retirement_processed", 0) or 0):
@@ -1639,13 +1798,16 @@ class EmployeesFrame(ttk.Frame):
         for item_id in tree.get_children():
             tree.delete(item_id)
         selected_filter = self.status_filter.get() or "active"
+        visible_index = 0
         for r in db.list_employees(self.conn):
             status = self._employee_status(r)
             if selected_filter != "all" and status != selected_filter:
                 continue
+            row_tag = "row_even" if visible_index % 2 else "row_odd"
             tree.insert(
                 "",
                 "end",
+                tags=(row_tag,),
                 values=(
                     r["employee_id"],
                     r["employee_code"],
@@ -1661,6 +1823,8 @@ class EmployeesFrame(ttk.Frame):
                     (r["memo"] if "memo" in r.keys() else "") or "",
                 ),
             )
+            visible_index += 1
+        self.after_idle(self._update_tree_column_lines)
 
     def _current_tree_key(self):
         return self.status_filter.get() or "active"
