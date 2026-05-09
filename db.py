@@ -20,6 +20,8 @@ EMPLOYEE_CSV_COLUMNS = [
     "支給日",
     "標準報酬月額（健保）",
     "標準報酬月額（厚年）",
+    "社会保険加入対象",
+    "雇用保険加入対象",
     "生年月日",
     "入社日",
     "退職日",
@@ -409,6 +411,10 @@ def upsert_employee(
     birth_date=None,
     payment_schedule_id=None,
     hire_date=None,
+    is_on_leave=0,
+    leave_start_date=None,
+    leave_expected_end_date=None,
+    leave_memo="",
     leave_date=None,
     retirement_processed=0,
     memo=None,
@@ -423,21 +429,24 @@ def upsert_employee(
     bank_account_type="",
     bank_account_number="",
     bank_account_holder="",
+    is_social_insurance_target=0,
+    is_employment_insurance_target=1,
 ):
     cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO employees(
           employee_code, name_kanji, name_kana, department, payday_group,
-          std_monthly_wage, std_pension_wage,
+          std_monthly_wage, std_pension_wage, is_social_insurance_target, is_employment_insurance_target,
           tax_type, dependents_count, work_prefecture_name,
           address_postal_code, address_prefecture, address_city, address_detail, resident_tax_municipality,
           phone, email, bank_name, bank_branch_name, bank_account_type, bank_account_number, bank_account_holder,
           birth_date,
-          payment_schedule_id, hire_date, leave_date, retirement_processed, memo,
+          payment_schedule_id, hire_date, is_on_leave, leave_start_date, leave_expected_end_date, leave_memo,
+          leave_date, retirement_processed, memo,
           department_id, position_id, employment_type_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_code) DO UPDATE SET
           name_kanji=excluded.name_kanji,
           name_kana=excluded.name_kana,
@@ -447,6 +456,8 @@ def upsert_employee(
           deleted_at=NULL,
           std_monthly_wage=excluded.std_monthly_wage,
           std_pension_wage=excluded.std_pension_wage,
+          is_social_insurance_target=excluded.is_social_insurance_target,
+          is_employment_insurance_target=excluded.is_employment_insurance_target,
           tax_type=excluded.tax_type,
           dependents_count=excluded.dependents_count,
           work_prefecture_name=excluded.work_prefecture_name,
@@ -465,6 +476,10 @@ def upsert_employee(
           birth_date=excluded.birth_date,
           payment_schedule_id=excluded.payment_schedule_id,
           hire_date=excluded.hire_date,
+          is_on_leave=excluded.is_on_leave,
+          leave_start_date=excluded.leave_start_date,
+          leave_expected_end_date=excluded.leave_expected_end_date,
+          leave_memo=excluded.leave_memo,
           leave_date=excluded.leave_date,
           retirement_processed=excluded.retirement_processed,
           memo=excluded.memo,
@@ -481,6 +496,8 @@ def upsert_employee(
             payday_group,
             std_health,
             std_pension,
+            int(is_social_insurance_target or 0),
+            int(is_employment_insurance_target or 0),
             tax_type,
             dependents_count,
             work_prefecture_name,
@@ -499,6 +516,10 @@ def upsert_employee(
             birth_date,
             payment_schedule_id,
             hire_date,
+            int(is_on_leave or 0),
+            leave_start_date,
+            leave_expected_end_date,
+            leave_memo or "",
             leave_date,
             int(retirement_processed or 0),
             memo,
@@ -1780,6 +1801,9 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
         department = _employee_csv_cell(row, "department", "部署")
         std_health = int(_employee_csv_cell(row, "std_monthly_wage", "標準報酬月額（健保）", default="0").replace(",", "") or 0)
         std_pension = int(_employee_csv_cell(row, "std_pension_wage", "標準報酬月額（厚年）", default="0").replace(",", "") or 0)
+        social_target_default = "1" if (std_health > 0 or std_pension > 0) else "0"
+        social_target = _employee_csv_bool(_employee_csv_cell(row, "is_social_insurance_target", "社会保険加入対象", default=social_target_default))
+        employment_target = _employee_csv_bool(_employee_csv_cell(row, "is_employment_insurance_target", "雇用保険加入対象", default="1"))
         tax_type = _employee_csv_cell(row, "tax_type", "源泉区分", "源泉", default="甲") or "甲"
         dependents_count = int(_employee_csv_cell(row, "dependents_count", "扶養人数", "扶養", default="0").replace(",", "") or 0)
         work_prefecture_name = _employee_csv_cell(row, "work_prefecture_name", "勤務地都道府県", "都道府県")
@@ -1831,6 +1855,8 @@ def import_employees_from_csv_rows(conn, rows: list[dict]) -> int:
             bank_account_type=bank_account_type,
             bank_account_number=bank_account_number,
             bank_account_holder=bank_account_holder,
+            is_social_insurance_target=social_target,
+            is_employment_insurance_target=employment_target,
         )
         imported += 1
     return imported
@@ -1849,6 +1875,8 @@ def list_employee_export_rows(conn) -> list[dict]:
                 "支給日": row_get(e, "payday_group", "") or "",
                 "標準報酬月額（健保）": row_get(e, "std_monthly_wage", 0) or 0,
                 "標準報酬月額（厚年）": row_get(e, "std_pension_wage", 0) or 0,
+                "社会保険加入対象": "1" if int(row_get(e, "is_social_insurance_target", 0) or 0) else "0",
+                "雇用保険加入対象": "1" if int(row_get(e, "is_employment_insurance_target", 1) or 0) else "0",
                 "生年月日": row_get(e, "birth_date", "") or "",
                 "入社日": row_get(e, "hire_date", "") or "",
                 "退職日": row_get(e, "leave_date", "") or "",
@@ -1925,6 +1953,8 @@ def get_payroll_rows(conn, target_month: str):
           p.*,
           e.employee_code, e.name_kanji, e.department, e.payday_group,
           e.std_monthly_wage, e.std_pension_wage,
+          COALESCE(e.is_social_insurance_target, 0) AS is_social_insurance_target,
+          COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target,
           e.tax_type, e.dependents_count, e.work_prefecture_name, e.birth_date,
           e.hire_date, e.leave_date,
 
@@ -2261,6 +2291,8 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
           p.*,
           e.employee_code, e.name_kanji, e.department, e.payday_group,
           e.std_monthly_wage, e.std_pension_wage,
+          COALESCE(e.is_social_insurance_target, 0) AS is_social_insurance_target,
+          COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target,
           e.tax_type, e.dependents_count, e.work_prefecture_name, e.birth_date,
           e.hire_date, e.leave_date,
 
@@ -2439,6 +2471,19 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE employees ADD COLUMN std_monthly_wage INTEGER NOT NULL DEFAULT 0")
     if not _column_exists(conn, "employees", "std_pension_wage"):
         conn.execute("ALTER TABLE employees ADD COLUMN std_pension_wage INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "employees", "is_social_insurance_target"):
+        conn.execute("ALTER TABLE employees ADD COLUMN is_social_insurance_target INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            """
+            UPDATE employees
+            SET is_social_insurance_target = CASE
+                WHEN COALESCE(std_monthly_wage, 0) > 0 OR COALESCE(std_pension_wage, 0) > 0 THEN 1
+                ELSE 0
+            END
+            """
+        )
+    if not _column_exists(conn, "employees", "is_employment_insurance_target"):
+        conn.execute("ALTER TABLE employees ADD COLUMN is_employment_insurance_target INTEGER NOT NULL DEFAULT 1")
 
     if not _column_exists(conn, "employees", "name_kana"):
         conn.execute("ALTER TABLE employees ADD COLUMN name_kana TEXT NOT NULL DEFAULT ''")
@@ -2479,6 +2524,15 @@ def ensure_schema_migrations(conn):
     # 入退社・月末在籍要件
     if not _column_exists(conn, "employees", "hire_date"):
         conn.execute("ALTER TABLE employees ADD COLUMN hire_date TEXT")
+
+    if not _column_exists(conn, "employees", "is_on_leave"):
+        conn.execute("ALTER TABLE employees ADD COLUMN is_on_leave INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "employees", "leave_start_date"):
+        conn.execute("ALTER TABLE employees ADD COLUMN leave_start_date TEXT")
+    if not _column_exists(conn, "employees", "leave_expected_end_date"):
+        conn.execute("ALTER TABLE employees ADD COLUMN leave_expected_end_date TEXT")
+    if not _column_exists(conn, "employees", "leave_memo"):
+        conn.execute("ALTER TABLE employees ADD COLUMN leave_memo TEXT NOT NULL DEFAULT ''")
 
     if not _column_exists(conn, "employees", "leave_date"):
         conn.execute("ALTER TABLE employees ADD COLUMN leave_date TEXT")
@@ -3566,8 +3620,9 @@ def apply_employment_insurance_auto(conn, target_month: str):
             wage_period_start,
             wage_period_end,
         )
+        employment_target = int(row_get(r, "is_employment_insurance_target", 1) or 0) == 1
 
-        if applicable:
+        if applicable and employment_target:
             base = _calc_emp_ins_base_from_payroll_row(r, conn)
             emp_amt = int(math.floor(base * emp_rate))
             er_amt = int(math.floor(base * er_rate))
@@ -3752,7 +3807,9 @@ def apply_social_insurance_auto(conn, target_month: str):
 
         enrolled = is_enrolled_at_month_end(hire_date, leave_date, target_month)
 
-        if enrolled:
+        social_target = int(row_get(r, "is_social_insurance_target", 0) or 0) == 1
+
+        if enrolled and social_target:
             health = round_half_up(std_health * h_rate)
             care = round_half_up(std_health * c_rate) if (care_applicable and c_rate > 0) else 0
             childcare_emp = round_half_up(std_health * cc_emp_rate) if cc_emp_rate > 0 else 0
@@ -5108,7 +5165,9 @@ def apply_bonus_insurance_auto(conn, target_month: str):
             b.bonus_id,
             b.employee_id,
             b.bonus_amount,
-            e.work_prefecture_name
+            e.work_prefecture_name,
+            COALESCE(e.is_social_insurance_target, 0) AS is_social_insurance_target,
+            COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
         WHERE b.target_month=?
@@ -5136,20 +5195,28 @@ def apply_bonus_insurance_auto(conn, target_month: str):
         # 3) 厚年・拠出金の月上限 150万円
         std_pension = min(std_raw, 1_500_000)
 
-        # 4) 本人負担
-        health = round_half_up(std_health * h_rate)
-        care = round_half_up(std_health * c_rate) if c_rate > 0 else 0
-        childcare_support_emp = round_half_up(std_health * cc_emp_rate) if cc_emp_rate > 0 else 0
-        pension = round_half_up(std_pension * p_rate)
+        if int(r["is_social_insurance_target"] or 0):
+            # 4) 本人負担
+            health = round_half_up(std_health * h_rate)
+            care = round_half_up(std_health * c_rate) if c_rate > 0 else 0
+            childcare_support_emp = round_half_up(std_health * cc_emp_rate) if cc_emp_rate > 0 else 0
+            pension = round_half_up(std_pension * p_rate)
 
-        # 5) 事業主負担
-        childcare_support_er = round_down(std_health * cc_er_rate) if cc_er_rate > 0 else 0
+            # 5) 事業主負担
+            childcare_support_er = round_down(std_health * cc_er_rate) if cc_er_rate > 0 else 0
 
-        # 6) 拠出金（事業主のみ）
-        childcare_contribution_er = round_down(std_pension * contribution_rate)
+            # 6) 拠出金（事業主のみ）
+            childcare_contribution_er = round_down(std_pension * contribution_rate)
+        else:
+            health = 0
+            care = 0
+            childcare_support_emp = 0
+            pension = 0
+            childcare_support_er = 0
+            childcare_contribution_er = 0
 
         # 7) 雇用保険は従来どおり賞与支給額ベース
-        empins = int(math.floor(amt * emp_rate))
+        empins = int(math.floor(amt * emp_rate)) if int(r["is_employment_insurance_target"] or 0) else 0
 
         social_total_calc = health + care + childcare_support_emp + pension + empins
 

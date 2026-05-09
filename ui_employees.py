@@ -40,6 +40,8 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
         self.payment_schedule_options = []
         self.var_std_health = tk.StringVar(value="0")
         self.var_std_pension = tk.StringVar(value="0")
+        self.var_social_insurance_target = tk.IntVar(value=0)
+        self.var_employment_insurance_target = tk.IntVar(value=1)
         self.var_tax_type = tk.StringVar(value="甲")
         self.var_dependents = tk.IntVar(value=0)
         self.var_pref = tk.StringVar()
@@ -278,6 +280,17 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
 
         return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
+    def _parse_money_var(self, var: tk.StringVar) -> int:
+        text = (var.get() or "").replace(",", "").strip()
+        if text == "":
+            return 0
+        if not text.isdigit():
+            raise ValueError("標準報酬月額は数字で入力してください。")
+        return int(text)
+
+    def _reset_dirty_state(self):
+        return None
+
     def get_selected_payment_schedule_id(self):
         selected_label = self.var_payment_schedule_id.get().strip()
         for label, schedule_id in self.payment_schedule_options:
@@ -307,6 +320,8 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
                    COALESCE(address_detail, '') AS address_detail,
                    COALESCE(std_monthly_wage, 0) AS std_monthly_wage,
                    COALESCE(std_pension_wage, 0) AS std_pension_wage,
+                   COALESCE(is_social_insurance_target, 0) AS is_social_insurance_target,
+                   COALESCE(is_employment_insurance_target, 1) AS is_employment_insurance_target,
                    COALESCE(tax_type, '甲') AS tax_type,
                    COALESCE(dependents_count, 0) AS dependents_count,
                    birth_date,
@@ -344,6 +359,8 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
                     break
         self.var_std_health.set(f'{int(r["std_monthly_wage"] or 0):,}')
         self.var_std_pension.set(f'{int(r["std_pension_wage"] or 0):,}')
+        self.var_social_insurance_target.set(int(r["is_social_insurance_target"] or 0))
+        self.var_employment_insurance_target.set(int(r["is_employment_insurance_target"] or 0))
         self.var_tax_type.set(r["tax_type"] or "甲")
         self.var_dependents.set(int(r["dependents_count"] or 0))
         self.var_pref.set(r["work_prefecture_name"] or "")
@@ -355,6 +372,7 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
         self.var_retirement_processed.set(int(r["retirement_processed"] or 0))
         self.txt_memo.delete("1.0", "end")
         self.txt_memo.insert("1.0", r["memo"] or "")
+        self._reset_dirty_state()
 
     def save(self):
         code = self.var_code.get().strip()
@@ -366,8 +384,8 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
         payment_schedule_id = self.get_selected_payment_schedule_id()
 
         try:
-            std_health = int((self.var_std_health.get() or "0").replace(",", ""))
-            std_pension = int((self.var_std_pension.get() or "0").replace(",", ""))
+            std_health = self._parse_money_var(self.var_std_health)
+            std_pension = self._parse_money_var(self.var_std_pension)
             tax_type = self.var_tax_type.get().strip() or "甲"
             deps = int(self.var_dependents.get() or 0)
             pref = self.var_pref.get().strip()
@@ -434,12 +452,12 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
             birth,
             payment_schedule_id,
             hire_date,
-            leave_date,
-            retirement_processed,
-            memo,
-            department_id,
-            position_id,
-            employment_type_id,
+            leave_date=leave_date,
+            retirement_processed=retirement_processed,
+            memo=memo,
+            department_id=department_id,
+            position_id=position_id,
+            employment_type_id=employment_type_id,
         )
 
         if callable(self.on_saved):
@@ -455,11 +473,12 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
         self.destroy()
 
 class EmployeeEditorDialog(tk.Toplevel):
-    def __init__(self, parent, conn, employee_id: int, on_saved=None):
+    def __init__(self, parent, conn, employee_id: int, on_saved=None, employee_filter="active"):
         super().__init__(parent)
         self.withdraw()
         self.conn = conn
         self.employee_id = employee_id
+        self.employee_filter = employee_filter or "active"
         self.on_saved = on_saved
         self.title("社員編集")
         self.resizable(True, True)
@@ -479,6 +498,8 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.payment_schedule_options = []
         self.var_std_health = tk.StringVar(value="0")
         self.var_std_pension = tk.StringVar(value="0")
+        self.var_social_insurance_target = tk.IntVar(value=0)
+        self.var_employment_insurance_target = tk.IntVar(value=1)
         self.var_tax_type = tk.StringVar(value="甲")
         self.var_dependents = tk.IntVar(value=0)
         self.var_social_prefecture = tk.StringVar()
@@ -500,18 +521,30 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_hire_y = tk.StringVar()
         self.var_hire_m = tk.StringVar()
         self.var_hire_d = tk.StringVar()
+        self.var_on_leave = tk.IntVar(value=0)
+        self.var_leave_start_y = tk.StringVar()
+        self.var_leave_start_m = tk.StringVar()
+        self.var_leave_start_d = tk.StringVar()
+        self.var_leave_expected_end_y = tk.StringVar()
+        self.var_leave_expected_end_m = tk.StringVar()
+        self.var_leave_expected_end_d = tk.StringVar()
+        self.var_leave_memo = tk.StringVar()
         self.var_leave_y = tk.StringVar()
         self.var_leave_m = tk.StringVar()
         self.var_leave_d = tk.StringVar()
         self.var_retirement_processed = tk.IntVar(value=0)
         self.txt_memo = None
+        self._initial_state = None
 
         self._build_layout()
         if self.employee_id:
             self.load_employee()
+        else:
+            self._reset_dirty_state()
+            self._update_navigation_buttons()
 
-        self.bind("<Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.close())
+        self.protocol("WM_DELETE_WINDOW", self.close)
         enable_enter_key_navigation(self)
         self.geometry("640x720")
         show_centered_window(self, parent)
@@ -534,17 +567,23 @@ class EmployeeEditorDialog(tk.Toplevel):
 
         self._build_basic_section(basic_form)
         self._build_employment_section(basic_form)
+        self._build_attendance_status_section(basic_form)
+        self._build_insurance_target_section(payroll_form)
         self._build_payment_calc_section(payroll_form)
         self._build_social_insurance_section(payroll_form)
         self._build_income_tax_section(payroll_form)
         self._build_resident_tax_section(payroll_form)
-        self._build_judgement_section(payroll_form)
+        self._build_insurance_explanation_section(payroll_form)
         self._build_address_section(address_form)
         self._build_bank_section(address_form)
         self._build_memo_section(address_form)
 
         btns = ttk.Frame(outer, padding=(10, 8))
         btns.grid(row=1, column=0, sticky="ew")
+        self.btn_prev_employee = ttk.Button(btns, text="前社員へ", command=lambda: self._move_employee(-1))
+        self.btn_prev_employee.pack(side="left", padx=(0, 8))
+        self.btn_next_employee = ttk.Button(btns, text="次社員へ", command=lambda: self._move_employee(1))
+        self.btn_next_employee.pack(side="left")
         ttk.Button(btns, text="保存", command=self.save).pack(side="right", padx=(8, 0))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="right")
 
@@ -627,16 +666,10 @@ class EmployeeEditorDialog(tk.Toplevel):
         self._label(frame, "生年月日", 1, 3)
         self._date_fields(frame, 1, 4, (self.var_birth_y, self.var_birth_m, self.var_birth_d))
         self._label(frame, "入社日", 2, 0)
-        self._date_fields(frame, 2, 1, (self.var_hire_y, self.var_hire_m, self.var_hire_d))
         self._label(frame, "退職日", 2, 3)
-        self._date_fields(frame, 2, 4, (self.var_leave_y, self.var_leave_m, self.var_leave_d))
         chk = ttk.Checkbutton(frame, text="退職処理済み", variable=self.var_retirement_processed)
         chk.configure(text="退職処理")
-        chk.grid(row=3, column=4, sticky="w", padx=5, pady=(0, 2))
-        self._bind_scroll(chk)
         note = ttk.Label(frame, text="チェックすると退職扱いとなります", foreground="#555555")
-        note.grid(row=4, column=4, sticky="w", padx=5, pady=(0, 4))
-        self._bind_scroll(note)
 
     def _build_employment_section(self, parent):
         frame = self._section(parent, "所属・雇用")
@@ -650,13 +683,63 @@ class EmployeeEditorDialog(tk.Toplevel):
         self._label(frame, "給与支給方式", 2, 0)
         self.cmb_payment_schedule = self._combo(frame, self.var_payment_schedule_id, self.load_payment_schedule_options(), 2, 1, width=22)
 
+    def _build_basic_section(self, parent):
+        frame = self._section(parent, "基本情報")
+        frame.grid_columnconfigure(2, minsize=30)
+        self._label(frame, "社員番号", 0, 0)
+        self._entry(frame, self.var_code, 0, 1)
+        self._label(frame, "氏名", 0, 3)
+        self._entry(frame, self.var_name, 0, 4)
+        self._label(frame, "フリガナ", 1, 0)
+        self._entry(frame, self.var_name_kana, 1, 1)
+        self._label(frame, "生年月日", 1, 3)
+        self._date_fields(frame, 1, 4, (self.var_birth_y, self.var_birth_m, self.var_birth_d))
+
+    def _build_attendance_status_section(self, parent):
+        frame = self._section(parent, "在籍情報・休職退職情報")
+        frame.grid_columnconfigure(2, minsize=30)
+        self._label(frame, "入社日", 0, 0)
+        self._date_fields(frame, 0, 1, (self.var_hire_y, self.var_hire_m, self.var_hire_d))
+        leave_chk = ttk.Checkbutton(frame, text="休職中", variable=self.var_on_leave)
+        leave_chk.grid(row=1, column=1, sticky="w", padx=5, pady=4)
+        self._bind_scroll(leave_chk)
+        self._label(frame, "休職開始日", 2, 0)
+        self._date_fields(frame, 2, 1, (self.var_leave_start_y, self.var_leave_start_m, self.var_leave_start_d))
+        self._label(frame, "休職終了予定日", 2, 3)
+        self._date_fields(frame, 2, 4, (self.var_leave_expected_end_y, self.var_leave_expected_end_m, self.var_leave_expected_end_d))
+        self._label(frame, "休職理由・メモ", 3, 0)
+        self._entry(frame, self.var_leave_memo, 3, 1, width=42).grid_configure(columnspan=4, sticky="ew")
+        retire_chk = ttk.Checkbutton(frame, text="退職処理", variable=self.var_retirement_processed)
+        retire_chk.grid(row=4, column=1, sticky="w", padx=5, pady=4)
+        self._bind_scroll(retire_chk)
+        self._label(frame, "退職日", 5, 0)
+        self._date_fields(frame, 5, 1, (self.var_leave_y, self.var_leave_m, self.var_leave_d))
+
     def _build_payment_calc_section(self, parent):
         frame = self._section(parent, "給与計算")
         frame.grid_columnconfigure(2, minsize=30)
         self._label(frame, "標準報酬月額（健保）", 0, 0)
-        self._entry(frame, self.var_std_health, 0, 1, width=10, justify="right")
+        ent_health = self._entry(frame, self.var_std_health, 0, 1, width=10, justify="right")
+        self._bind_money_format(ent_health, self.var_std_health)
         self._label(frame, "標準報酬月額（厚年）", 0, 3)
-        self._entry(frame, self.var_std_pension, 0, 4, width=10, justify="right")
+        ent_pension = self._entry(frame, self.var_std_pension, 0, 4, width=10, justify="right")
+        self._bind_money_format(ent_pension, self.var_std_pension)
+
+    def _build_insurance_target_section(self, parent):
+        frame = self._section(parent, "保険加入")
+        social = ttk.Checkbutton(frame, text="社会保険加入対象", variable=self.var_social_insurance_target)
+        social.grid(row=0, column=0, sticky="w", padx=5, pady=4)
+        self._bind_scroll(social)
+        social_note = ttk.Label(frame, text="チェックが入っている場合、標準報酬月額をもとに社会保険料を計算します。", foreground="#555555", wraplength=620)
+        social_note.grid(row=1, column=0, columnspan=4, sticky="w", padx=24, pady=(0, 4))
+        self._bind_scroll(social_note)
+
+        employment = ttk.Checkbutton(frame, text="雇用保険加入対象", variable=self.var_employment_insurance_target)
+        employment.grid(row=2, column=0, sticky="w", padx=5, pady=4)
+        self._bind_scroll(employment)
+        employment_note = ttk.Label(frame, text="チェックが入っている場合、雇用保険対象額をもとに雇用保険料を計算します。", foreground="#555555", wraplength=620)
+        employment_note.grid(row=3, column=0, columnspan=4, sticky="w", padx=24, pady=(0, 4))
+        self._bind_scroll(employment_note)
 
     def _build_social_insurance_section(self, parent):
         frame = self._section(parent, "社会保険")
@@ -682,15 +765,15 @@ class EmployeeEditorDialog(tk.Toplevel):
         self._label(frame, "市区町村", 1, 0)
         self._entry(frame, self.var_resident_tax_municipality, 1, 1, width=28)
 
-    def _build_judgement_section(self, parent):
-        frame = self._section(parent, "判定情報")
+    def _build_insurance_explanation_section(self, parent):
+        frame = self._section(parent, "保険料計算の説明")
         for row, (label, value) in enumerate((
-            ("社会保険加入", "標準報酬月額により判定"),
-            ("雇用保険加入", "給与計算時に判定"),
-            ("介護保険対象", "生年月日から判定"),
+            ("社会保険料", "「社会保険加入対象」がONで、標準報酬月額が設定されている場合に計算します。"),
+            ("雇用保険料", "「雇用保険加入対象」がONの場合、雇用保険対象額をもとに計算します。"),
+            ("介護保険料", "社会保険加入対象者のうち、生年月日から介護保険対象年齢に該当する場合に計算します。"),
         )):
             self._label(frame, label, row, 0)
-            value_label = ttk.Label(frame, text=value)
+            value_label = ttk.Label(frame, text=value, wraplength=560)
             value_label.grid(row=row, column=1, sticky="w", padx=5, pady=4)
             self._bind_scroll(value_label)
 
@@ -704,11 +787,11 @@ class EmployeeEditorDialog(tk.Toplevel):
         self._label(frame, "市区町村", 1, 0)
         self._entry(frame, self.var_address_city, 1, 1, width=23)
         self._label(frame, "番地・建物名", 1, 3)
-        self._entry(frame, self.var_address_detail, 1, 4, width=30)
+        self._entry(frame, self.var_address_detail, 1, 4, width=36)
         self._label(frame, "電話番号", 2, 0)
         self._entry(frame, self.var_phone, 2, 1, width=18)
         self._label(frame, "メールアドレス", 2, 3)
-        self._entry(frame, self.var_email, 2, 4, width=30)
+        self._entry(frame, self.var_email, 2, 4, width=36)
 
     def _build_bank_section(self, parent):
         frame = self._section(parent, "振込先")
@@ -768,6 +851,80 @@ class EmployeeEditorDialog(tk.Toplevel):
         if canvas is not None:
             canvas.xview_scroll(units, "units")
         return "break"
+
+    def _parse_money_var(self, var: tk.StringVar) -> int:
+        text = (var.get() or "").replace(",", "").strip()
+        if text == "":
+            return 0
+        if not text.isdigit():
+            raise ValueError("標準報酬月額は数字で入力してください。")
+        return int(text)
+
+    def _format_money_var(self, var: tk.StringVar):
+        var.set(f"{self._parse_money_var(var):,}")
+
+    def _bind_money_format(self, entry, var: tk.StringVar):
+        def on_focus_in(_event):
+            var.set((var.get() or "").replace(",", ""))
+            entry.select_range(0, "end")
+
+        def on_focus_out(_event):
+            try:
+                self._format_money_var(var)
+            except ValueError:
+                pass
+
+        entry.bind("<FocusIn>", on_focus_in, add="+")
+        entry.bind("<FocusOut>", on_focus_out, add="+")
+
+    def _collect_state(self):
+        return {
+            "code": self.var_code.get(),
+            "name": self.var_name.get(),
+            "name_kana": self.var_name_kana.get(),
+            "department": self.var_department_id.get(),
+            "position": self.var_position_id.get(),
+            "employment_type": self.var_employment_type_id.get(),
+            "payment_schedule": self.var_payment_schedule_id.get(),
+            "std_health": (self.var_std_health.get() or "").replace(",", "").strip(),
+            "std_pension": (self.var_std_pension.get() or "").replace(",", "").strip(),
+            "social_target": int(self.var_social_insurance_target.get() or 0),
+            "employment_target": int(self.var_employment_insurance_target.get() or 0),
+            "tax_type": self.var_tax_type.get(),
+            "dependents": int(self.var_dependents.get() or 0),
+            "social_prefecture": self.var_social_prefecture.get(),
+            "address_postal_code": self.var_address_postal_code.get(),
+            "address_prefecture": self.var_address_prefecture.get(),
+            "address_city": self.var_address_city.get(),
+            "address_detail": self.var_address_detail.get(),
+            "resident_tax_municipality": self.var_resident_tax_municipality.get(),
+            "phone": self.var_phone.get(),
+            "email": self.var_email.get(),
+            "bank_name": self.var_bank_name.get(),
+            "bank_branch_name": self.var_bank_branch_name.get(),
+            "bank_account_type": self.var_bank_account_type.get(),
+            "bank_account_number": self.var_bank_account_number.get(),
+            "bank_account_holder": self.var_bank_account_holder.get(),
+            "birth": (self.var_birth_y.get(), self.var_birth_m.get(), self.var_birth_d.get()),
+            "hire": (self.var_hire_y.get(), self.var_hire_m.get(), self.var_hire_d.get()),
+            "on_leave": int(self.var_on_leave.get() or 0),
+            "leave_start": (self.var_leave_start_y.get(), self.var_leave_start_m.get(), self.var_leave_start_d.get()),
+            "leave_expected_end": (
+                self.var_leave_expected_end_y.get(),
+                self.var_leave_expected_end_m.get(),
+                self.var_leave_expected_end_d.get(),
+            ),
+            "leave_memo": self.var_leave_memo.get(),
+            "leave": (self.var_leave_y.get(), self.var_leave_m.get(), self.var_leave_d.get()),
+            "retirement_processed": int(self.var_retirement_processed.get() or 0),
+            "memo": self.txt_memo.get("1.0", "end-1c") if self.txt_memo is not None else "",
+        }
+
+    def _reset_dirty_state(self):
+        self._initial_state = self._collect_state()
+
+    def _has_unsaved_changes(self) -> bool:
+        return self._initial_state is not None and self._collect_state() != self._initial_state
 
     def load_payment_schedule_options(self):
         import db
@@ -849,6 +1006,76 @@ class EmployeeEditorDialog(tk.Toplevel):
                 return
         self.var_payment_schedule_id.set("")
 
+    def _employee_navigation_ids(self):
+        cur = self.conn.cursor()
+        where = ["COALESCE(is_deleted, 0) = 0"]
+        if self.employee_filter == "active":
+            where.append("COALESCE(retirement_processed, 0) = 0")
+            where.append("COALESCE(is_on_leave, 0) = 0")
+        elif self.employee_filter == "leave":
+            where.append("COALESCE(retirement_processed, 0) = 0")
+            where.append("COALESCE(is_on_leave, 0) = 1")
+        elif self.employee_filter == "retired":
+            where.append("COALESCE(retirement_processed, 0) = 1")
+        where_sql = " AND ".join(where)
+        cur.execute(
+            f"""
+            SELECT employee_id
+            FROM employees
+            WHERE {where_sql}
+            ORDER BY
+              CASE WHEN employee_code GLOB '[0-9]*' THEN CAST(employee_code AS INTEGER) ELSE NULL END,
+              employee_code,
+              employee_id
+            """
+        )
+        return [int(row["employee_id"]) for row in cur.fetchall()]
+
+    def _update_navigation_buttons(self):
+        if not hasattr(self, "btn_prev_employee") or not hasattr(self, "btn_next_employee"):
+            return
+        state_prev = "disabled"
+        state_next = "disabled"
+        if self.employee_id:
+            ids = self._employee_navigation_ids()
+            try:
+                index = ids.index(int(self.employee_id))
+                if index > 0:
+                    state_prev = "normal"
+                if index < len(ids) - 1:
+                    state_next = "normal"
+            except ValueError:
+                pass
+        self.btn_prev_employee.configure(state=state_prev)
+        self.btn_next_employee.configure(state=state_next)
+
+    def _confirm_discard_changes(self, message=None):
+        if not self._has_unsaved_changes():
+            return True
+        return messagebox.askyesno(
+            "確認",
+            message or "変更内容が保存されていません。保存せずに社員を切り替えますか？",
+            parent=self,
+        )
+
+    def _move_employee(self, direction):
+        if not self.employee_id:
+            return
+        if not self._confirm_discard_changes():
+            return
+        ids = self._employee_navigation_ids()
+        try:
+            index = ids.index(int(self.employee_id))
+        except ValueError:
+            self._update_navigation_buttons()
+            return
+        next_index = index + direction
+        if next_index < 0 or next_index >= len(ids):
+            self._update_navigation_buttons()
+            return
+        self.employee_id = ids[next_index]
+        self.load_employee()
+
     def load_employee(self):
         cur = self.conn.cursor()
         cur.execute(
@@ -870,9 +1097,14 @@ class EmployeeEditorDialog(tk.Toplevel):
                    COALESCE(bank_account_holder, '') AS bank_account_holder,
                    COALESCE(std_monthly_wage, 0) AS std_monthly_wage,
                    COALESCE(std_pension_wage, 0) AS std_pension_wage,
+                   COALESCE(is_social_insurance_target, 0) AS is_social_insurance_target,
+                   COALESCE(is_employment_insurance_target, 1) AS is_employment_insurance_target,
                    COALESCE(tax_type, '甲') AS tax_type,
                    COALESCE(dependents_count, 0) AS dependents_count,
-                   birth_date, hire_date, leave_date,
+                   birth_date, hire_date,
+                   COALESCE(is_on_leave, 0) AS is_on_leave,
+                   leave_start_date, leave_expected_end_date, COALESCE(leave_memo, '') AS leave_memo,
+                   leave_date,
                    COALESCE(retirement_processed, 0) AS retirement_processed,
                    memo
             FROM employees
@@ -902,6 +1134,8 @@ class EmployeeEditorDialog(tk.Toplevel):
                     break
         self.var_std_health.set(f'{int(r["std_monthly_wage"] or 0):,}')
         self.var_std_pension.set(f'{int(r["std_pension_wage"] or 0):,}')
+        self.var_social_insurance_target.set(int(r["is_social_insurance_target"] or 0))
+        self.var_employment_insurance_target.set(int(r["is_employment_insurance_target"] or 0))
         self.var_tax_type.set(r["tax_type"] or "甲")
         self.var_dependents.set(int(r["dependents_count"] or 0))
         self.var_social_prefecture.set(r["work_prefecture_name"] or "")
@@ -919,10 +1153,21 @@ class EmployeeEditorDialog(tk.Toplevel):
         self.var_bank_account_holder.set(r["bank_account_holder"] or "")
         self._split_date_to_vars(r["birth_date"], self.var_birth_y, self.var_birth_m, self.var_birth_d)
         self._split_date_to_vars(r["hire_date"], self.var_hire_y, self.var_hire_m, self.var_hire_d)
+        self.var_on_leave.set(int(r["is_on_leave"] or 0))
+        self._split_date_to_vars(r["leave_start_date"], self.var_leave_start_y, self.var_leave_start_m, self.var_leave_start_d)
+        self._split_date_to_vars(
+            r["leave_expected_end_date"],
+            self.var_leave_expected_end_y,
+            self.var_leave_expected_end_m,
+            self.var_leave_expected_end_d,
+        )
+        self.var_leave_memo.set(r["leave_memo"] or "")
         self._split_date_to_vars(r["leave_date"], self.var_leave_y, self.var_leave_m, self.var_leave_d)
         self.var_retirement_processed.set(int(r["retirement_processed"] or 0))
         self.txt_memo.delete("1.0", "end")
         self.txt_memo.insert("1.0", r["memo"] or "")
+        self._reset_dirty_state()
+        self._update_navigation_buttons()
 
     def save(self):
         code = self.var_code.get().strip()
@@ -934,12 +1179,20 @@ class EmployeeEditorDialog(tk.Toplevel):
         payment_schedule_id = self.get_selected_payment_schedule_id()
 
         try:
-            std_health = int((self.var_std_health.get() or "0").replace(",", ""))
-            std_pension = int((self.var_std_pension.get() or "0").replace(",", ""))
+            std_health = self._parse_money_var(self.var_std_health)
+            std_pension = self._parse_money_var(self.var_std_pension)
             tax_type = self.var_tax_type.get().strip() or "甲"
             deps = int(self.var_dependents.get() or 0)
             birth = self._build_date_from_vars(self.var_birth_y, self.var_birth_m, self.var_birth_d)
             hire_date = self._build_date_from_vars(self.var_hire_y, self.var_hire_m, self.var_hire_d)
+            is_on_leave = int(self.var_on_leave.get() or 0)
+            leave_start_date = self._build_date_from_vars(self.var_leave_start_y, self.var_leave_start_m, self.var_leave_start_d)
+            leave_expected_end_date = self._build_date_from_vars(
+                self.var_leave_expected_end_y,
+                self.var_leave_expected_end_m,
+                self.var_leave_expected_end_d,
+            )
+            leave_memo = self.var_leave_memo.get().strip()
             leave_date = self._build_date_from_vars(self.var_leave_y, self.var_leave_m, self.var_leave_d)
             retirement_processed = int(self.var_retirement_processed.get() or 0)
             memo = self.txt_memo.get("1.0", "end-1c").strip() or None
@@ -958,7 +1211,13 @@ class EmployeeEditorDialog(tk.Toplevel):
             return
 
         from datetime import datetime
-        for label, value in [("生年月日", birth), ("入社日", hire_date), ("退職日", leave_date)]:
+        for label, value in [
+            ("生年月日", birth),
+            ("入社日", hire_date),
+            ("休職開始日", leave_start_date),
+            ("休職終了予定日", leave_expected_end_date),
+            ("退職日", leave_date),
+        ]:
             if value:
                 try:
                     datetime.strptime(value, "%Y-%m-%d")
@@ -994,6 +1253,10 @@ class EmployeeEditorDialog(tk.Toplevel):
             birth,
             payment_schedule_id,
             hire_date,
+            is_on_leave,
+            leave_start_date,
+            leave_expected_end_date,
+            leave_memo,
             leave_date,
             retirement_processed,
             memo,
@@ -1008,12 +1271,31 @@ class EmployeeEditorDialog(tk.Toplevel):
             bank_account_type=self.var_bank_account_type.get().strip(),
             bank_account_number=self.var_bank_account_number.get().strip(),
             bank_account_holder=self.var_bank_account_holder.get().strip(),
+            is_social_insurance_target=int(self.var_social_insurance_target.get() or 0),
+            is_employment_insurance_target=int(self.var_employment_insurance_target.get() or 0),
         )
         if callable(self.on_saved):
             self.on_saved()
-        self.close()
+        if not self.employee_id:
+            row = self.conn.execute(
+                "SELECT employee_id FROM employees WHERE employee_code = ?",
+                (code,),
+            ).fetchone()
+            if row:
+                self.employee_id = int(row["employee_id"])
+        self._format_money_var(self.var_std_health)
+        self._format_money_var(self.var_std_pension)
+        self._reset_dirty_state()
+        self._update_navigation_buttons()
+        messagebox.showinfo("保存完了", "保存しました。", parent=self)
 
     def close(self):
+        if not self._confirm_discard_changes("保存せずに閉じますか？"):
+            return
+        self._reset_dirty_state()
+        if self._has_unsaved_changes():
+            if not messagebox.askyesno("確認", "変更内容が保存されていません。保存せずに閉じますか？", parent=self):
+                return
         try:
             self.grab_release()
         except Exception:
@@ -1260,4 +1542,168 @@ class EmployeesFrame(ttk.Frame):
 
     def open_editor(self, employee_id: int):
         dlg = EmployeeEditorDialog(self, self.conn, employee_id=employee_id, on_saved=self.refresh)
+        self.wait_window(dlg)
+
+    def __init__(self, master, conn):
+        super().__init__(master)
+        self.conn = conn
+        self.status_filter = tk.StringVar(value="active")
+        self._sort_state = {"active": {}, "leave": {}, "retired": {}, "all": {}}
+        self.trees = {}
+
+        filter_frame = ttk.LabelFrame(self, text="表示条件", padding=(10, 6))
+        filter_frame.pack(fill="x", padx=10, pady=(10, 0))
+        for text, value in (
+            ("在職者", "active"),
+            ("休職者", "leave"),
+            ("退職者", "retired"),
+            ("すべて", "all"),
+        ):
+            ttk.Radiobutton(
+                filter_frame,
+                text=text,
+                value=value,
+                variable=self.status_filter,
+                command=self.refresh,
+            ).pack(side="left", padx=(0, 16))
+
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tree = self._build_tree(tree_frame)
+        self.trees = {key: self.tree for key in ("active", "leave", "retired", "all")}
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill="x", padx=5, pady=5)
+        ttk.Button(btn_frame, text="追加", command=self.add_employee).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="編集", command=self.edit_selected).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="削除", command=self.delete_selected).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="インポート・エクスポート", command=self.open_io_dialog).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="閉じる", command=self.close_window).pack(side="right", padx=5)
+
+        self.refresh()
+        enable_enter_key_navigation(self)
+
+    def _build_tree(self, parent):
+        frame = ttk.Frame(parent)
+        frame.pack(fill="both", expand=True)
+        tree = ttk.Treeview(
+            frame,
+            columns=self.COLUMNS,
+            displaycolumns=self.DISPLAY_COLUMNS,
+            show="headings",
+            height=12,
+        )
+        y_scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        x_scroll = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        for c, t, w in [
+            ("id", "ID", 60),
+            ("code", "社員番号", 76),
+            ("name", "氏名", 96),
+            ("dept", "部署・事業所", 130),
+            ("pref", "都道府県", 84),
+            ("city", "市区町村", 110),
+            ("address", "住所", 180),
+            ("payday", "給与支給方式", 116),
+            ("birth_date", "生年月日", 150),
+            ("tax_type", "源泉", 54),
+            ("deps", "扶養", 54),
+            ("memo", "メモ", 220),
+        ]:
+            tree.heading(c, text=t, command=lambda col=c: self._sort_tree(self._current_tree_key(), col))
+            anchor = "w" if c == "memo" else "center"
+            stretch = c == "memo"
+            tree.column(c, width=w, anchor=anchor, stretch=stretch)
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        tree.bind("<Double-1>", self.on_double_click)
+        return tree
+
+    def _employee_status(self, row):
+        if int(row.get("retirement_processed", 0) or 0):
+            return "retired"
+        if int(row.get("is_on_leave", 0) or 0):
+            return "leave"
+        return "active"
+
+    def refresh(self):
+        import db
+        tree = self.tree
+        for item_id in tree.get_children():
+            tree.delete(item_id)
+        selected_filter = self.status_filter.get() or "active"
+        for r in db.list_employees(self.conn):
+            status = self._employee_status(r)
+            if selected_filter != "all" and status != selected_filter:
+                continue
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    r["employee_id"],
+                    r["employee_code"],
+                    r["name_kanji"],
+                    r["department"],
+                    r["work_prefecture_name"] if "work_prefecture_name" in r.keys() else "",
+                    r["address_city"] if "address_city" in r.keys() else "",
+                    r["address_detail"] if "address_detail" in r.keys() else "",
+                    db.get_employee_payment_schedule_display(r, self.conn),
+                    self._format_birth_date(r["birth_date"] if "birth_date" in r.keys() else ""),
+                    r["tax_type"] if "tax_type" in r.keys() else "甲",
+                    r["dependents_count"] if "dependents_count" in r.keys() else 0,
+                    (r["memo"] if "memo" in r.keys() else "") or "",
+                ),
+            )
+
+    def _current_tree_key(self):
+        return self.status_filter.get() or "active"
+
+    def _current_tree(self):
+        return self.tree
+
+    def _clear_tab_selection(self):
+        self.tree.selection_remove(self.tree.selection())
+
+    def add_employee(self):
+        dlg = EmployeeEditorDialog(
+            self,
+            self.conn,
+            employee_id=None,
+            on_saved=self.refresh,
+            employee_filter=self._current_tree_key(),
+        )
+        self.wait_window(dlg)
+
+    def edit_selected(self):
+        tree = self._current_tree()
+        sel = tree.selection()
+        if not sel:
+            messagebox.showwarning("確認", "社員を選択してください。")
+            return
+        vals = tree.item(sel[0], "values")
+        if not vals:
+            return
+        self.open_editor(int(vals[0]))
+
+    def on_double_click(self, event):
+        tree = event.widget
+        sel = tree.selection()
+        if not sel:
+            return
+        vals = tree.item(sel[0], "values")
+        if not vals:
+            return
+        self.open_editor(int(vals[0]))
+
+    def open_editor(self, employee_id: int):
+        dlg = EmployeeEditorDialog(
+            self,
+            self.conn,
+            employee_id=employee_id,
+            on_saved=self.refresh,
+            employee_filter=self._current_tree_key(),
+        )
         self.wait_window(dlg)
