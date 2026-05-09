@@ -29,12 +29,13 @@ def create_main_menubar(root):
 
     file_menu = tk.Menu(menubar, tearoff=False)
     import_menu = tk.Menu(file_menu, tearoff=False)
-    import_menu.add_command(label="社員データをインポート", command=root.open_employee_import)
+    import_menu.add_command(label="社員データをインポート", command=root.open_employee_io)
     import_menu.add_command(label="給与データをインポート(未実装)", state="disabled")
     import_menu.add_command(label="住民税データをインポート(未実装)", state="disabled")
     file_menu.add_cascade(label="インポート", menu=import_menu)
 
     export_menu = tk.Menu(file_menu, tearoff=False)
+    export_menu.add_command(label="社員データをエクスポート", command=root.open_employee_io)
     export_menu.add_command(label="給与明細(.xlsx)", command=root.export_payroll_detail_excel)
     export_menu.add_command(label="支給控除一覧(.xlsx)", command=root.export_pay_deduct_excel)
     export_menu.add_command(label="賃金台帳(.xlsx)", command=root.export_monthly_payroll_excel)
@@ -153,9 +154,12 @@ class App(tk.Tk):
 
         create_main_menubar(self)
 
-    def open_employee_import(self):
+    def open_employee_io(self):
         dlg = EmployeeIODialog(self, self.conn)
         self.wait_window(dlg)
+
+    def open_employee_import(self):
+        self.open_employee_io()
 
     def export_pay_deduct_excel(self):
         self.payroll_frame.export_pay_deduct_month()
