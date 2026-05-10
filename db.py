@@ -2524,16 +2524,36 @@ def ensure_schema_migrations(conn):
     # -------------------------------------------------
     # payroll_bonus
     # -------------------------------------------------
+    if not _column_exists(conn, "payroll_bonus", "health_ins_auto"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN health_ins_auto INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "health_ins_override"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN health_ins_override INTEGER")
     if not _column_exists(conn, "payroll_bonus", "health_ins_employee"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN health_ins_employee INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "care_ins_auto"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN care_ins_auto INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "care_ins_override"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN care_ins_override INTEGER")
     if not _column_exists(conn, "payroll_bonus", "care_ins_employee"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN care_ins_employee INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "childcare_support_auto"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN childcare_support_auto INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "childcare_support_override"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN childcare_support_override INTEGER")
     if not _column_exists(conn, "payroll_bonus", "childcare_support_employee"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN childcare_support_employee INTEGER NOT NULL DEFAULT 0")
     if not _column_exists(conn, "payroll_bonus", "childcare_support_employer"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN childcare_support_employer INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "pension_ins_auto"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN pension_ins_auto INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "pension_ins_override"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN pension_ins_override INTEGER")
     if not _column_exists(conn, "payroll_bonus", "pension_ins_employee"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN pension_ins_employee INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "emp_ins_auto"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN emp_ins_auto INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_bonus", "emp_ins_override"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN emp_ins_override INTEGER")
     if not _column_exists(conn, "payroll_bonus", "emp_ins_employee"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN emp_ins_employee INTEGER NOT NULL DEFAULT 0")
     if not _column_exists(conn, "payroll_bonus", "social_ins_total_calc"):
@@ -4826,6 +4846,47 @@ def upsert_bonus(conn, target_month: str, pay_date: str, employee_id: int, bonus
     )
     conn.commit()
 
+def get_bonus_by_employee_month(conn, target_month: str, employee_id: int):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT b.*,
+               e.employee_code, e.name_kanji, e.department,
+               e.tax_type, e.dependents_count, e.work_prefecture_name
+        FROM payroll_bonus b
+        JOIN employees e ON e.employee_id = b.employee_id
+        WHERE b.target_month=? AND b.employee_id=?
+        """,
+        (target_month, employee_id),
+    )
+    return cur.fetchone()
+
+def update_bonus_overrides(conn, bonus_id: int, overrides: dict):
+    allowed = {
+        "health_ins_override",
+        "care_ins_override",
+        "childcare_support_override",
+        "pension_ins_override",
+        "emp_ins_override",
+        "withholding_tax_override",
+    }
+    updates = []
+    params = []
+    for key, value in overrides.items():
+        if key not in allowed:
+            continue
+        updates.append(f"{key}=?")
+        params.append(value)
+    if not updates:
+        return
+    updates.append("updated_at=datetime('now')")
+    params.append(bonus_id)
+    conn.execute(
+        f"UPDATE payroll_bonus SET {', '.join(updates)} WHERE bonus_id=?",
+        params,
+    )
+    conn.commit()
+
 def list_bonus_batch_rows(conn, target_month: str):
     cur = conn.cursor()
     cur.execute(
@@ -4835,11 +4896,21 @@ def list_bonus_batch_rows(conn, target_month: str):
           b.pay_date,
           COUNT(*) AS employee_count,
           SUM(COALESCE(b.bonus_amount, 0)) AS total_bonus_amount,
-          SUM(COALESCE(b.social_ins_total_calc, 0)) AS total_social_ins,
+          SUM(
+            COALESCE(b.health_ins_employee, 0)
+            + COALESCE(b.care_ins_employee, 0)
+            + COALESCE(b.childcare_support_employee, 0)
+            + COALESCE(b.pension_ins_employee, 0)
+          ) AS total_social_ins,
+          SUM(COALESCE(b.emp_ins_employee, 0)) AS total_emp_ins,
           SUM(COALESCE(b.withholding_tax_applied, 0)) AS total_withholding_tax,
           SUM(
             COALESCE(b.bonus_amount, 0)
-            - COALESCE(b.social_ins_total_calc, 0)
+            - COALESCE(b.health_ins_employee, 0)
+            - COALESCE(b.care_ins_employee, 0)
+            - COALESCE(b.childcare_support_employee, 0)
+            - COALESCE(b.pension_ins_employee, 0)
+            - COALESCE(b.emp_ins_employee, 0)
             - COALESCE(b.withholding_tax_applied, 0)
           ) AS total_net_amount
         FROM payroll_bonus b
@@ -4860,11 +4931,21 @@ def list_bonus_batch_rows_by_target_year(conn, year: int):
           b.pay_date,
           COUNT(*) AS employee_count,
           SUM(COALESCE(b.bonus_amount, 0)) AS total_bonus_amount,
-          SUM(COALESCE(b.social_ins_total_calc, 0)) AS total_social_ins,
+          SUM(
+            COALESCE(b.health_ins_employee, 0)
+            + COALESCE(b.care_ins_employee, 0)
+            + COALESCE(b.childcare_support_employee, 0)
+            + COALESCE(b.pension_ins_employee, 0)
+          ) AS total_social_ins,
+          SUM(COALESCE(b.emp_ins_employee, 0)) AS total_emp_ins,
           SUM(COALESCE(b.withholding_tax_applied, 0)) AS total_withholding_tax,
           SUM(
             COALESCE(b.bonus_amount, 0)
-            - COALESCE(b.social_ins_total_calc, 0)
+            - COALESCE(b.health_ins_employee, 0)
+            - COALESCE(b.care_ins_employee, 0)
+            - COALESCE(b.childcare_support_employee, 0)
+            - COALESCE(b.pension_ins_employee, 0)
+            - COALESCE(b.emp_ins_employee, 0)
             - COALESCE(b.withholding_tax_applied, 0)
           ) AS total_net_amount
         FROM payroll_bonus b
@@ -4885,11 +4966,21 @@ def list_bonus_batch_rows_by_paydate_year(conn, year: int):
           b.pay_date,
           COUNT(*) AS employee_count,
           SUM(COALESCE(b.bonus_amount, 0)) AS total_bonus_amount,
-          SUM(COALESCE(b.social_ins_total_calc, 0)) AS total_social_ins,
+          SUM(
+            COALESCE(b.health_ins_employee, 0)
+            + COALESCE(b.care_ins_employee, 0)
+            + COALESCE(b.childcare_support_employee, 0)
+            + COALESCE(b.pension_ins_employee, 0)
+          ) AS total_social_ins,
+          SUM(COALESCE(b.emp_ins_employee, 0)) AS total_emp_ins,
           SUM(COALESCE(b.withholding_tax_applied, 0)) AS total_withholding_tax,
           SUM(
             COALESCE(b.bonus_amount, 0)
-            - COALESCE(b.social_ins_total_calc, 0)
+            - COALESCE(b.health_ins_employee, 0)
+            - COALESCE(b.care_ins_employee, 0)
+            - COALESCE(b.childcare_support_employee, 0)
+            - COALESCE(b.pension_ins_employee, 0)
+            - COALESCE(b.emp_ins_employee, 0)
             - COALESCE(b.withholding_tax_applied, 0)
           ) AS total_net_amount
         FROM payroll_bonus b
@@ -5037,6 +5128,11 @@ def apply_bonus_insurance_auto(conn, target_month: str):
             b.bonus_id,
             b.employee_id,
             b.bonus_amount,
+            b.health_ins_override,
+            b.care_ins_override,
+            b.childcare_support_override,
+            b.pension_ins_override,
+            b.emp_ins_override,
             e.work_prefecture_name,
             COALESCE(e.is_social_insurance_target, 0) AS is_social_insurance_target,
             COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target
@@ -5090,7 +5186,13 @@ def apply_bonus_insurance_auto(conn, target_month: str):
         # 7) 雇用保険は従来どおり賞与支給額ベース
         empins = int(math.floor(amt * emp_rate)) if int(r["is_employment_insurance_target"] or 0) else 0
 
-        social_total_calc = health + care + childcare_support_emp + pension + empins
+        applied_health = health if r["health_ins_override"] is None else int(r["health_ins_override"])
+        applied_care = care if r["care_ins_override"] is None else int(r["care_ins_override"])
+        applied_childcare = childcare_support_emp if r["childcare_support_override"] is None else int(r["childcare_support_override"])
+        applied_pension = pension if r["pension_ins_override"] is None else int(r["pension_ins_override"])
+        applied_empins = empins if r["emp_ins_override"] is None else int(r["emp_ins_override"])
+
+        social_total_calc = applied_health + applied_care + applied_childcare + applied_pension
 
         cur.execute(
             """
@@ -5099,6 +5201,11 @@ def apply_bonus_insurance_auto(conn, target_month: str):
                 std_bonus_health=?,
                 std_bonus_pension=?,
                 bonus_fiscal_year=?,
+                health_ins_auto=?,
+                care_ins_auto=?,
+                childcare_support_auto=?,
+                pension_ins_auto=?,
+                emp_ins_auto=?,
                 health_ins_employee=?,
                 care_ins_employee=?,
                 childcare_support_employee=?,
@@ -5118,10 +5225,15 @@ def apply_bonus_insurance_auto(conn, target_month: str):
                 health,
                 care,
                 childcare_support_emp,
-                childcare_support_er,
-                childcare_contribution_er,
                 pension,
                 empins,
+                applied_health,
+                applied_care,
+                applied_childcare,
+                childcare_support_er,
+                childcare_contribution_er,
+                applied_pension,
+                applied_empins,
                 social_total_calc,
                 r["bonus_id"],
             ),
@@ -5312,7 +5424,8 @@ def apply_bonus_withholding_tax_auto(conn, target_month: str, year: int = WITHHO
 
         bonus_amt = int(r["bonus_amount"] or 0)
         social = int(row_get(r, "social_ins_total_calc", 0) or 0)
-        bonus_after_social = max(0, bonus_amt - social)
+        emp_ins = int(row_get(r, "emp_ins_employee", 0) or 0)
+        bonus_after_social = max(0, bonus_amt - social - emp_ins)
 
         auto = int(math.floor(bonus_after_social * rate_percent / 100.0))
 

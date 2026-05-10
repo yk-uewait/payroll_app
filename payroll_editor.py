@@ -163,7 +163,7 @@ class PayrollEditorDialog(tk.Toplevel):
         self.money_entries = []
         self.scroll_canvases = []
 
-        self.title("給与入力の編集")
+        self.title("支給控除金額の編集")
         self.geometry(app_settings.get_window_geometry("payroll_editor"))
         self.resizable(True, True)
         self.transient(master)

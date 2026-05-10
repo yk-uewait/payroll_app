@@ -40,7 +40,7 @@ class PayrollBatchDialog(tk.Toplevel):
         self.employee_value_widgets = []
         self.output_data_by_payroll_id = {}
 
-        self.title(f"給与明細 {target_month} / 支払日 {pay_date_applied}")
+        self.title("支給控除一覧表")
         self.geometry(app_settings.get_window_geometry("payroll_batch"))
         self.resizable(True, True)
         self.transient(master)
@@ -56,7 +56,7 @@ class PayrollBatchDialog(tk.Toplevel):
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btns, text="選択社員の編集", command=self.edit_selected).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="未計算社員を追加", command=self.add_missing_employees).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self._close).pack(side="right")
 
@@ -274,18 +274,18 @@ class PayrollBatchDialog(tk.Toplevel):
             row_kind = item_def["row_kind"]
             emphasis = item_def["emphasis"]
             if row_kind == "separator":
-                sep_lbl = tk.Frame(self.matrix_frame, bg="#9ca3af", height=3)
+                sep_lbl = tk.Frame(self.matrix_frame, bg="#cbd5e1", height=2)
                 sep_lbl.grid(row=row_idx, column=0, sticky="ew")
                 self._bind_scroll_events(sep_lbl)
 
                 line_widgets = []
                 for col_idx, _row in enumerate(self.rows_data, start=1):
-                    sep = tk.Frame(self.matrix_frame, bg="#9ca3af", height=3)
+                    sep = tk.Frame(self.matrix_frame, bg="#cbd5e1", height=2)
                     sep.grid(row=row_idx, column=col_idx, sticky="ew")
                     self._bind_scroll_events(sep)
                     line_widgets.append(sep)
                 self.employee_value_widgets.append(line_widgets)
-                self.matrix_row_styles.append({"row_kind": row_kind, "emphasis": False, "bg": "#9ca3af"})
+                self.matrix_row_styles.append({"row_kind": row_kind, "emphasis": False, "bg": "#cbd5e1"})
                 continue
 
             title_bg = "#f8fafc" if emphasis else "#f0f0f0"

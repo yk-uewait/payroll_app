@@ -7,6 +7,10 @@ import db
 from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 
+SEPARATOR_COLOR = "#cbd5e1"
+SEPARATOR_HEIGHT = 2
+
+
 class BonusBatchDialog(tk.Toplevel):
     def __init__(self, master, conn, target_month: str, pay_date: str):
         super().__init__(master)
@@ -18,8 +22,9 @@ class BonusBatchDialog(tk.Toplevel):
         self.selected_employee_index = None
         self.employee_header_labels = []
         self.employee_value_widgets = []
+        self.matrix_row_styles = []
 
-        self.title(f"賞与明細 {target_month} / 支給日 {pay_date}")
+        self.title("賞与支給控除一覧表")
         self.geometry(app_settings.get_window_geometry("bonus_batch"))
         self.resizable(True, True)
         self.transient(master)
@@ -34,10 +39,9 @@ class BonusBatchDialog(tk.Toplevel):
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btns, text="再読み込み", command=self.refresh).pack(side="left", padx=5)
-        ttk.Button(btns, text="新規追加", command=self.add_bonus).pack(side="right", padx=5)
-        ttk.Button(btns, text="選択社員を編集", command=self.edit_selected).pack(side="right", padx=5)
-        ttk.Button(btns, text="選択社員を削除", command=self.delete_selected).pack(side="right", padx=5)
+        ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="未入力社員を追加", command=self.add_bonus).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="選択社員を削除", command=self.delete_selected).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.destroy).pack(side="right", padx=5)
 
         self.refresh()
@@ -101,35 +105,51 @@ class BonusBatchDialog(tk.Toplevel):
 
         self._render_matrix(fmt_yen)
 
+    def _row_def(self, key, title, is_money, row_kind="data", emphasis=False):
+        return {
+            "key": key,
+            "title": title,
+            "is_money": is_money,
+            "row_kind": row_kind,
+            "emphasis": emphasis,
+        }
+
     def _render_matrix(self, fmt_yen):
         for child in self.matrix_frame.winfo_children():
             child.destroy()
 
         item_defs = [
-            ("bonus_id", "BID", False),
-            ("employee_code", "社員番号", False),
-            ("name_kanji", "氏名", False),
-            ("department", "部署", False),
-            ("pay_date", "支給日", False),
-            ("bonus_amount", "賞与額", True),
-            ("health_care_display", "健保+介護", True),
-            ("childcare_support_employee", "子ども子育て", True),
-            ("pension_ins_employee", "厚年", True),
-            ("emp_ins_employee", "雇保", True),
-            ("social_ins_total_calc", "社保合計", True),
-            ("withholding_tax_auto", "源泉(自動)", True),
-            ("withholding_tax_override", "源泉(上書)", True),
-            ("withholding_tax_applied", "源泉(適用)", True),
-            ("net_amount", "差引支給額", True),
-            ("note", "備考", False),
+            self._row_def("department", "部署", False),
+            self._row_def("pay_date", "支給日", False),
+            self._row_def("separator_pay", "", False, row_kind="separator"),
+            self._row_def("bonus_amount", "賞与支給額", True, emphasis=True),
+            self._row_def("bonus_total", "支給金額合計", True, emphasis=True),
+            self._row_def("separator_deduction", "", False, row_kind="separator"),
+            self._row_def("health_ins_employee", "健康保険料", True),
+            self._row_def("care_ins_employee", "介護保険料", True),
+            self._row_def("childcare_support_employee", "子ども・子育て支援金", True),
+            self._row_def("pension_ins_employee", "厚生年金保険料", True),
+            self._row_def("social_ins_total_calc", "社会保険料合計", True, emphasis=True),
+            self._row_def("emp_ins_employee", "雇用保険料", True),
+            self._row_def("withholding_tax_applied", "所得税", True),
+            self._row_def("deduction_total", "控除合計額", True, emphasis=True),
+            self._row_def("separator_net", "", False, row_kind="separator"),
+            self._row_def("net_amount", "差引支給額", True, emphasis=True),
+            self._row_def("note", "備考", False),
         ]
 
-        ttk.Label(self.matrix_frame, text="項目", anchor="center", relief="solid", padding=4).grid(
-            row=0, column=0, sticky="nsew"
-        )
+        ttk.Label(
+            self.matrix_frame,
+            text="社員番号\n名前",
+            anchor="center",
+            justify="center",
+            relief="solid",
+            padding=4,
+        ).grid(row=0, column=0, sticky="nsew")
 
         self.employee_header_labels = []
         self.employee_value_widgets = []
+        self.matrix_row_styles = []
 
         for col_idx, row in enumerate(self.rows_data, start=1):
             lbl = tk.Label(
@@ -148,26 +168,47 @@ class BonusBatchDialog(tk.Toplevel):
             lbl.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
             self.employee_header_labels.append(lbl)
 
-        for row_idx, (key, title, is_money) in enumerate(item_defs, start=1):
-            title_lbl = ttk.Label(self.matrix_frame, text=title, anchor="w", relief="solid", padding=4)
-            title_lbl.grid(
-                row=row_idx, column=0, sticky="nsew"
+        for row_idx, item_def in enumerate(item_defs, start=1):
+            if item_def["row_kind"] == "separator":
+                sep_lbl = tk.Frame(self.matrix_frame, bg=SEPARATOR_COLOR, height=SEPARATOR_HEIGHT)
+                sep_lbl.grid(row=row_idx, column=0, sticky="ew")
+                sep_lbl.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+                line_widgets = []
+                for col_idx, _row in enumerate(self.rows_data, start=1):
+                    sep = tk.Frame(self.matrix_frame, bg=SEPARATOR_COLOR, height=SEPARATOR_HEIGHT)
+                    sep.grid(row=row_idx, column=col_idx, sticky="ew")
+                    sep.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+                    line_widgets.append(sep)
+                self.employee_value_widgets.append(line_widgets)
+                self.matrix_row_styles.append({"row_kind": "separator", "emphasis": False, "bg": SEPARATOR_COLOR})
+                continue
+
+            title = item_def["title"]
+            is_money = item_def["is_money"]
+            emphasis = item_def["emphasis"]
+            title_bg = "#f8fafc" if emphasis else "#f0f0f0"
+            value_bg = "#f8fafc" if emphasis else "white"
+            font = ("TkDefaultFont", 9, "bold") if emphasis else ("TkDefaultFont", 9)
+
+            title_lbl = tk.Label(
+                self.matrix_frame,
+                text=title,
+                anchor="w",
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=1,
+                highlightbackground="#e5e7eb",
+                padx=6,
+                pady=4,
+                bg=title_bg,
+                font=font,
             )
+            title_lbl.grid(row=row_idx, column=0, sticky="nsew")
             title_lbl.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
 
             line_widgets = []
             for col_idx, row in enumerate(self.rows_data, start=1):
-                if key == "health_care_display":
-                    value = int(row["health_ins_employee"] or 0) + int(row["care_ins_employee"] or 0)
-                elif key == "net_amount":
-                    value = (
-                        int(row["bonus_amount"] or 0)
-                        - int(row["social_ins_total_calc"] or 0)
-                        - int(row["withholding_tax_applied"] or 0)
-                    )
-                else:
-                    value = row[key] if key in row.keys() else ""
-
+                value = self._matrix_value(row, item_def["key"])
                 if value is None:
                     value = ""
                 if is_money and value != "":
@@ -176,13 +217,16 @@ class BonusBatchDialog(tk.Toplevel):
                 lbl = tk.Label(
                     self.matrix_frame,
                     text=value,
-                    relief="solid",
-                    borderwidth=1,
+                    relief="flat",
+                    borderwidth=0,
+                    highlightthickness=1,
+                    highlightbackground="#e5e7eb",
                     padx=6,
                     pady=4,
                     anchor="e" if is_money else "w",
                     justify="left",
-                    bg="#fcf8e3" if col_idx - 1 == self.selected_employee_index else "white",
+                    bg=value_bg,
+                    font=font,
                 )
                 lbl.grid(row=row_idx, column=col_idx, sticky="nsew")
                 lbl.bind("<Button-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx))
@@ -191,6 +235,11 @@ class BonusBatchDialog(tk.Toplevel):
                 line_widgets.append(lbl)
 
             self.employee_value_widgets.append(line_widgets)
+            self.matrix_row_styles.append({"row_kind": "data", "emphasis": emphasis, "bg": value_bg})
+
+        self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=170)
+        for col_idx in range(1, len(self.rows_data) + 1):
+            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=130)
 
         self._apply_selection_highlight()
         self.matrix_frame.update_idletasks()
@@ -201,12 +250,39 @@ class BonusBatchDialog(tk.Toplevel):
         )
         self._on_matrix_configure()
 
+    def _matrix_value(self, row, key):
+        bonus = int(row["bonus_amount"] or 0)
+        social = (
+            int(row["health_ins_employee"] or 0)
+            + int(row["care_ins_employee"] or 0)
+            + int(row["childcare_support_employee"] or 0)
+            + int(row["pension_ins_employee"] or 0)
+        )
+        emp_ins = int(row["emp_ins_employee"] or 0)
+        withholding = int(row["withholding_tax_applied"] or 0)
+        deduction_total = social + emp_ins + withholding
+
+        if key == "bonus_total":
+            return bonus
+        if key == "social_ins_total_calc":
+            return social
+        if key == "deduction_total":
+            return deduction_total
+        if key == "net_amount":
+            return bonus - deduction_total
+        return row[key] if key in row.keys() else ""
+
     def _apply_selection_highlight(self):
         for idx, lbl in enumerate(self.employee_header_labels):
             lbl.configure(bg="#d9edf7" if idx == self.selected_employee_index else "#f0f0f0")
-        for line_widgets in self.employee_value_widgets:
+        for row_style, line_widgets in zip(self.matrix_row_styles, self.employee_value_widgets):
+            if row_style["row_kind"] == "separator":
+                for lbl in line_widgets:
+                    lbl.configure(bg=SEPARATOR_COLOR)
+                continue
+            base_bg = "#f8fafc" if row_style.get("emphasis") else "white"
             for idx, lbl in enumerate(line_widgets):
-                lbl.configure(bg="#fcf8e3" if idx == self.selected_employee_index else "white")
+                lbl.configure(bg="#fcf8e3" if idx == self.selected_employee_index else base_bg)
 
     def _set_selected_employee_index(self, idx: int, open_editor: bool = False):
         self.selected_employee_index = idx
@@ -226,7 +302,7 @@ class BonusBatchDialog(tk.Toplevel):
         if not row:
             messagebox.showinfo("確認", "対象社員を選択してください。")
             return
-        
+
         from ui_bonus import BonusEditorDialog
 
         dlg = BonusEditorDialog(self, self.conn, self.target_month, bonus_row=row)
@@ -237,12 +313,20 @@ class BonusBatchDialog(tk.Toplevel):
     def add_bonus(self):
         from ui_bonus import BonusEditorDialog
 
+        existing_ids = {int(row["employee_id"]) for row in self.rows_data}
+        all_employees = db.list_employees(self.conn)
+        missing_ids = {int(e["employee_id"]) for e in all_employees if int(e["employee_id"]) not in existing_ids}
+        if not missing_ids:
+            messagebox.showinfo("確認", "追加できる未入力社員がいません。", parent=self)
+            return
+
         dlg = BonusEditorDialog(
             self,
             self.conn,
             self.target_month,
             bonus_row=None,
             initial_pay_date=self.pay_date,
+            employee_ids=missing_ids,
         )
         self.wait_window(dlg)
         self.refresh()
@@ -261,7 +345,7 @@ class BonusBatchDialog(tk.Toplevel):
         msg = (
             "選択した賞与明細を削除しますか？\n\n"
             f"社員番号: {emp_code}\n"
-            f"氏名: {emp_name}\n"
+            f"名前: {emp_name}\n"
             f"対象年月: {self.target_month}\n"
             f"支給日: {pay_date}"
         )
@@ -270,29 +354,19 @@ class BonusBatchDialog(tk.Toplevel):
 
         bonus_id = int(row["bonus_id"])
         db.delete_bonus(self.conn, bonus_id)
-
-        # 明細削除後、親一覧（支給日ごとの一覧）も更新
         self._refresh_parent_if_possible()
-
-        # いま開いている支給日グループを再読み込み
         self.refresh()
 
-        # この支給日の明細が0件になったらダイアログを閉じる
         if not self.rows_data:
             messagebox.showinfo("削除完了", "この支給日の賞与明細は0件になりました。画面を閉じます。")
             self.destroy()
             return
 
-        # 選択位置が末尾を超えた場合の補正
         if self.selected_employee_index is not None and self.selected_employee_index >= len(self.rows_data):
             self.selected_employee_index = len(self.rows_data) - 1
             self._apply_selection_highlight()
 
     def _refresh_parent_if_possible(self):
-        """
-        親画面が refresh() を持っていれば再読込する。
-        BonusFrame から開いた明細ダイアログを想定。
-        """
         parent = self.master
         if parent is not None and hasattr(parent, "refresh"):
             try:

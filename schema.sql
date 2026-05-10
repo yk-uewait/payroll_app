@@ -200,11 +200,21 @@ CREATE TABLE IF NOT EXISTS payroll_bonus (
   note                        TEXT,
 
   -- Insurance (employee share) - compatibility columns
+  health_ins_auto             INTEGER NOT NULL DEFAULT 0,
+  health_ins_override         INTEGER,
   health_ins_employee         INTEGER NOT NULL DEFAULT 0,
+  care_ins_auto               INTEGER NOT NULL DEFAULT 0,
+  care_ins_override           INTEGER,
   care_ins_employee           INTEGER NOT NULL DEFAULT 0,
+  childcare_support_auto      INTEGER NOT NULL DEFAULT 0,
+  childcare_support_override  INTEGER,
   childcare_support_employee  INTEGER NOT NULL DEFAULT 0,
   childcare_support_employer  INTEGER NOT NULL DEFAULT 0,
+  pension_ins_auto            INTEGER NOT NULL DEFAULT 0,
+  pension_ins_override        INTEGER,
   pension_ins_employee        INTEGER NOT NULL DEFAULT 0,
+  emp_ins_auto                INTEGER NOT NULL DEFAULT 0,
+  emp_ins_override            INTEGER,
   emp_ins_employee            INTEGER NOT NULL DEFAULT 0,
 
   -- Calculated totals
