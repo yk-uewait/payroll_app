@@ -1,4 +1,4 @@
-# 給与計算画面
+﻿# 給与計算画面
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -9,6 +9,7 @@ import db
 from utils_dates import parse_month, compute_pay_date
 
 from payroll_batch_dialog import PayrollBatchDialog
+from ui_create_dialogs import CreateMethodDialog, YearMonthDialog
 from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 
 
@@ -91,32 +92,32 @@ class PayrollFrame(ttk.Frame):
         self._sort_state = {}
         self._batch_rows_raw = []
 
-        top = ttk.LabelFrame(self, text="給与")
-        top.pack(fill="x", padx=10, pady=10)
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=10, pady=(8, 4))
 
         self.var_display_basis = tk.StringVar(value="対象年月")
         self.var_year = tk.StringVar()
 
         ttk.Label(top, text="表示基準").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Combobox(
+        self.cmb_display_basis = ttk.Combobox(
             top,
             textvariable=self.var_display_basis,
             values=["対象年月", "支払日"],
             width=10,
             state="readonly",
-        ).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        )
+        self.cmb_display_basis.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
         ttk.Label(top, text="年").grid(row=0, column=2, padx=5, pady=5, sticky="w")
         self.cmb_year = ttk.Combobox(top, textvariable=self.var_year, width=8, state="readonly")
         self.cmb_year.grid(row=0, column=3, padx=5, pady=5, sticky="w")
 
-        ttk.Button(top, text="表示", command=self.refresh).grid(row=0, column=4, padx=5, pady=5)
-        ttk.Button(top, text="新規作成", command=self.create_month).grid(row=0, column=5, padx=5, pady=5)
-        ttk.Button(top, text="前月複写", command=self.copy_prev).grid(row=0, column=6, padx=5, pady=5)
+        self.cmb_display_basis.bind("<<ComboboxSelected>>", lambda event: self.refresh())
+        self.cmb_year.bind("<<ComboboxSelected>>", lambda event: self.refresh())
 
         # --- Treeview + Scrollbars ---
         tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=(4, 6))
 
         xscroll = ttk.Scrollbar(tree_frame, orient="horizontal")
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical")
@@ -138,7 +139,7 @@ class PayrollFrame(ttk.Frame):
                 "net_pay_sum",
             ),
             show="headings",
-            height=14,
+            height=11,
             xscrollcommand=xscroll.set,
             yscrollcommand=yscroll.set,
         )
@@ -178,6 +179,9 @@ class PayrollFrame(ttk.Frame):
  
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btns, text="新規作成", command=self.create_month).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="編集", command=self.open_selected_batch).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="削除", command=self.delete_selected_batch).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self._close_window).pack(side="right", padx=5)
 
         self._load_years()
@@ -225,8 +229,68 @@ class PayrollFrame(ttk.Frame):
         return target_month
 
     def create_month(self):
+        dlg = CreateMethodDialog(self, "給与")
+        self.wait_window(dlg)
+        if dlg.result == "new":
+            self._create_month_new_flow()
+        elif dlg.result == "copy":
+            self._create_month_copy_flow()
+
+    def _ask_create_month(self, title: str, source_options=None):
+        initial_year = int(self.var_year.get()) if (self.var_year.get() or "").isdigit() else date.today().year
+        dlg = YearMonthDialog(
+            self,
+            title,
+            source_options=source_options,
+            initial_year=initial_year,
+            initial_month=date.today().month,
+        )
+        self.wait_window(dlg)
+        return dlg.result
+
+    def _ensure_payroll_month_not_exists(self, target_month: str) -> bool:
+        if db.payroll_month_exists(self.conn, target_month):
+            messagebox.showwarning(
+                "確認",
+                "指定した対象年月には、すでに給与データが存在します。\n別の年月を指定してください。",
+                parent=self,
+            )
+            return False
+        return True
+
+    def _create_month_new_flow(self):
+        result = self._ask_create_month("給与データの新規作成")
+        if not result:
+            return
+        m, _source = result
+        if not self._ensure_payroll_month_not_exists(m):
+            return
+        self._create_month_records(m)
+
+    def _create_month_copy_flow(self):
+        source_months = db.list_payroll_copy_source_months(self.conn)
+        if not source_months:
+            messagebox.showinfo("確認", "複写元にできる給与データがありません。", parent=self)
+            return
+        source_options = [(self._format_target_month_label(m) + " 給与", m) for m in source_months]
+        result = self._ask_create_month("給与データを既存明細から複写", source_options=source_options)
+        if not result:
+            return
+        m, source_month = result
+        if not self._ensure_payroll_month_not_exists(m):
+            return
+        self._create_month_records(m)
+        db.copy_prev_month_inputs(self.conn, m, source_month)
         try:
-            m = self._get_target_month()
+            db.recalc_target_month(self.conn, m)
+        except Exception as e:
+            messagebox.showwarning("自動計算", f"複写後の自動計算でエラーが発生しました。\n\n詳細: {e}", parent=self)
+        self._load_years()
+        self.var_year.set(m[:4])
+        self.refresh()
+
+    def _create_month_records(self, m: str):
+        try:
             mi = parse_month(m)
         except Exception as e:
             messagebox.showerror("入力エラー", str(e))
@@ -352,7 +416,7 @@ class PayrollFrame(ttk.Frame):
 
         for i in self.tree.get_children():
             self.tree.delete(i)
-            self._batch_rows_raw = []
+        self._batch_rows_raw = []
 
         year_text = (self.var_year.get() or "").strip()
         if not year_text.isdigit():
@@ -389,7 +453,8 @@ class PayrollFrame(ttk.Frame):
 
                 values.append(v)
 
-            self.tree.insert("", "end", values=tuple(values))
+            iid = f"{r['target_month']}|{r['pay_date_applied']}"
+            self.tree.insert("", "end", iid=iid, values=tuple(values))
         refresh_grid_treeview(self.tree)
 
     def _get_display_basis_key(self) -> str:
@@ -430,13 +495,11 @@ class PayrollFrame(ttk.Frame):
         if not sel:
             return None, None
 
-        item_id = sel[0]
-        index = self.tree.index(item_id)
-        if index < 0 or index >= len(self._batch_rows_raw):
+        item_id = str(sel[0])
+        parts = item_id.split("|", 1)
+        if len(parts) != 2:
             return None, None
-
-        row = self._batch_rows_raw[index]
-        return row["target_month"], row["pay_date_applied"]
+        return parts[0], parts[1]
 
     def open_selected_batch(self):
         target_month, pay_date_applied = self._selected_batch()
@@ -446,6 +509,24 @@ class PayrollFrame(ttk.Frame):
         
         dlg = PayrollBatchDialog(self, self.conn, target_month, pay_date_applied)
         self.wait_window(dlg)
+        self.refresh()
+
+    def delete_selected_batch(self):
+        target_month, pay_date_applied = self._selected_batch()
+        if not target_month or not pay_date_applied:
+            messagebox.showwarning("確認", "削除する行を選択してください。")
+            return
+
+        ok = messagebox.askokcancel(
+            "削除確認",
+            "選択した給与データを削除しますか？",
+            parent=self,
+        )
+        if not ok:
+            return
+
+        db.delete_payroll_batch(self.conn, target_month, pay_date_applied)
+        self._load_years()
         self.refresh()
 
     def export_pay_deduct_month(self):

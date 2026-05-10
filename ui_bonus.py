@@ -1,4 +1,4 @@
-# 賞与計算画面（プロ方式：payroll_bonus 別テーブル）
+﻿# 賞与計算画面（プロ方式：payroll_bonus 別テーブル）
 
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -8,6 +8,7 @@ from datetime import date
 import db
 from utils_dates import parse_month
 from bonus_batch_dialog import BonusBatchDialog
+from ui_create_dialogs import CreateMethodDialog, YearMonthDialog
 from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
 
 class BonusEditorDialog(tk.Toplevel):
@@ -132,30 +133,31 @@ class BonusFrame(ttk.Frame):
         self._sort_state = {}
         self._batch_rows_raw = []
 
-        top = ttk.LabelFrame(self, text="賞与")
-        top.pack(fill="x", padx=10, pady=10)
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=10, pady=(8, 4))
 
         self.var_display_basis = tk.StringVar(value="対象年月")
         self.var_year = tk.StringVar()
 
         ttk.Label(top, text="表示基準").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Combobox(
+        self.cmb_display_basis = ttk.Combobox(
             top,
             textvariable=self.var_display_basis,
             values=["対象年月", "支払日"],
             width=10,
             state="readonly",
-        ).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        )
+        self.cmb_display_basis.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
         ttk.Label(top, text="年").grid(row=0, column=2, padx=5, pady=5, sticky="w")
         self.cmb_year = ttk.Combobox(top, textvariable=self.var_year, width=8, state="readonly")
         self.cmb_year.grid(row=0, column=3, padx=5, pady=5, sticky="w")
 
-        ttk.Button(top, text="表示", command=self.refresh).grid(row=0, column=4, padx=5, pady=5)
-        ttk.Button(top, text="新規作成", command=self.add_bonus).grid(row=0, column=5, padx=5, pady=5)
+        self.cmb_display_basis.bind("<<ComboboxSelected>>", lambda event: self.refresh())
+        self.cmb_year.bind("<<ComboboxSelected>>", lambda event: self.refresh())
 
         tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=(4, 6))
 
         xscroll = ttk.Scrollbar(tree_frame, orient="horizontal")
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical")
@@ -171,7 +173,7 @@ class BonusFrame(ttk.Frame):
                 "total_net_amount",
             ),
             show="headings",
-            height=14,
+            height=11,
             xscrollcommand=xscroll.set,
             yscrollcommand=yscroll.set,
         )
@@ -204,6 +206,9 @@ class BonusFrame(ttk.Frame):
 
         footer = ttk.Frame(self)
         footer.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(footer, text="新規作成", command=self.add_bonus).pack(side="left", padx=(0, 8))
+        ttk.Button(footer, text="編集", command=self.open_selected_batch).pack(side="left", padx=(0, 8))
+        ttk.Button(footer, text="削除", command=self.delete_selected_batch).pack(side="left", padx=(0, 8))
         ttk.Button(footer, text="閉じる", command=self._close_window).pack(side="right", padx=5)
 
         self._load_years()
@@ -311,46 +316,86 @@ class BonusFrame(ttk.Frame):
                 fmt_yen(r["total_social_ins"] or 0),
                 fmt_yen(r["total_withholding_tax"] or 0),
                 fmt_yen(r["total_net_amount"] or 0),
-            ))
+            ), iid=f"{r['target_month']}|{r['pay_date']}")
         refresh_grid_treeview(self.tree)
 
     def _selected_batch(self):
         sel = self.tree.selection()
         if not sel:
             return None, None
-        item_id = sel[0]
-        index = self.tree.index(item_id)
-        if index < 0 or index >= len(self._batch_rows_raw):
+        item_id = str(sel[0])
+        parts = item_id.split("|", 1)
+        if len(parts) != 2:
             return None, None
-        row = self._batch_rows_raw[index]
-        return row["target_month"], row["pay_date"]
+        return parts[0], parts[1]
 
     def add_bonus(self):
-        year_text = (self.var_year.get() or "").strip()
-        if not year_text.isdigit():
-            messagebox.showerror("入力エラー", "年を選択してください。")
-            return
+        dlg = CreateMethodDialog(self, "賞与")
+        self.wait_window(dlg)
+        if dlg.result == "new":
+            self._add_bonus_new_flow()
+        elif dlg.result == "copy":
+            self._add_bonus_copy_flow()
 
-        pay_date = simpledialog.askstring(
-            "新規作成",
-            "支払日（yyyy-mm-dd）を入力してください。",
-            initialvalue=f"{year_text}-{date.today().month:02d}-01",
-            parent=self,
+    def _ask_bonus_month(self, title: str, source_options=None):
+        initial_year = int(self.var_year.get()) if (self.var_year.get() or "").isdigit() else date.today().year
+        dlg = YearMonthDialog(
+            self,
+            title,
+            source_options=source_options,
+            initial_year=initial_year,
+            initial_month=date.today().month,
         )
-        if pay_date is None:
-            return
+        self.wait_window(dlg)
+        return dlg.result
 
-        try:
-            pay_date = self._normalize_pay_date(pay_date)
-        except Exception as e:
-            messagebox.showerror("入力エラー", str(e))
-            return
+    def _ensure_bonus_month_not_exists(self, target_month: str) -> bool:
+        if db.bonus_month_exists(self.conn, target_month):
+            messagebox.showwarning(
+                "確認",
+                "指定した対象年月には、すでに賞与データが存在します。\n別の年月を指定してください。",
+                parent=self,
+            )
+            return False
+        return True
 
-        m = f"{pay_date[:4]}-{pay_date[5:7]}"
-        dlg = BonusBatchDialog(self, self.conn, m, pay_date)
+    def _add_bonus_new_flow(self):
+        result = self._ask_bonus_month("賞与データの新規作成")
+        if not result:
+            return
+        target_month, _source = result
+        if not self._ensure_bonus_month_not_exists(target_month):
+            return
+        pay_date = f"{target_month}-01"
+        dlg = BonusBatchDialog(self, self.conn, target_month, pay_date)
         self.wait_window(dlg)
         self._load_years()
-        self.var_year.set(pay_date[:4])
+        self.var_year.set(target_month[:4])
+        self.refresh()
+
+    def _add_bonus_copy_flow(self):
+        source_months = db.list_bonus_copy_source_months(self.conn)
+        if not source_months:
+            messagebox.showinfo("確認", "複写元にできる賞与データがありません。", parent=self)
+            return
+        source_options = [(self._format_target_month_label(m) + " 賞与", m) for m in source_months]
+        result = self._ask_bonus_month("賞与データを既存明細から複写", source_options=source_options)
+        if not result:
+            return
+        target_month, source_month = result
+        if not self._ensure_bonus_month_not_exists(target_month):
+            return
+        pay_date = f"{target_month}-01"
+        copied = db.copy_prev_bonus_inputs(self.conn, target_month, pay_date, source_month)
+        if copied <= 0:
+            messagebox.showinfo("確認", "選択した複写元の賞与データがありません。", parent=self)
+            return
+        try:
+            db.recalc_bonus_month(self.conn, target_month)
+        except Exception as e:
+            messagebox.showwarning("自動計算", f"複写後の自動計算でエラーが発生しました。\n\n詳細: {e}", parent=self)
+        self._load_years()
+        self.var_year.set(target_month[:4])
         self.refresh()
 
     def open_selected_batch(self):
@@ -360,6 +405,68 @@ class BonusFrame(ttk.Frame):
             return
         dlg = BonusBatchDialog(self, self.conn, target_month, pay_date)
         self.wait_window(dlg)
+        self.refresh()
+
+    def copy_prev_bonus(self):
+        year_text = (self.var_year.get() or "").strip()
+        if not year_text.isdigit():
+            messagebox.showerror("入力エラー", "年を選択してください。")
+            return
+
+        pay_date = simpledialog.askstring(
+            "前月複写",
+            "複写先の支払日（yyyy-mm-dd）を入力してください。",
+            initialvalue=f"{year_text}-{date.today().month:02d}-01",
+            parent=self,
+        )
+        if pay_date is None:
+            return
+
+        try:
+            pay_date = self._normalize_pay_date(pay_date)
+            target_month = f"{pay_date[:4]}-{pay_date[5:7]}"
+            prev_month = db._prev_month(target_month)
+        except Exception as e:
+            messagebox.showerror("入力エラー", str(e))
+            return
+
+        ok = messagebox.askokcancel(
+            "前月複写の確認",
+            f"前月（{prev_month}）の賞与入力を、支払日 {pay_date} に複写します。\nよろしいですか？",
+            parent=self,
+        )
+        if not ok:
+            return
+
+        copied = db.copy_prev_bonus_inputs(self.conn, target_month, pay_date, prev_month)
+        if copied <= 0:
+            messagebox.showinfo("確認", f"前月（{prev_month}）の賞与データがありません。")
+            return
+        try:
+            db.recalc_bonus_month(self.conn, target_month)
+        except Exception as e:
+            messagebox.showwarning("自動計算", f"複写後の自動計算でエラーが発生しました。\n\n詳細: {e}")
+        messagebox.showinfo("完了", f"前月（{prev_month}）の賞与入力を複写しました。")
+        self._load_years()
+        self.var_year.set(pay_date[:4])
+        self.refresh()
+
+    def delete_selected_batch(self):
+        target_month, pay_date = self._selected_batch()
+        if not target_month or not pay_date:
+            messagebox.showwarning("確認", "削除する行を選択してください。")
+            return
+
+        ok = messagebox.askokcancel(
+            "削除確認",
+            "選択した賞与データを削除しますか？",
+            parent=self,
+        )
+        if not ok:
+            return
+
+        db.delete_bonus_batch(self.conn, target_month, pay_date)
+        self._load_years()
         self.refresh()
 
     def _sort_value(self, value):

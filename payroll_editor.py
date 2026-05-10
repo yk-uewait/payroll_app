@@ -259,14 +259,35 @@ class PayrollEditorDialog(tk.Toplevel):
         parent.grid_rowconfigure(0, weight=1)
         parent.grid_columnconfigure(0, weight=1)
 
-        inner.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        inner.bind("<Configure>", lambda event, c=canvas, s=scrollbar: self._sync_scroll_area(c, s))
+        canvas.bind("<Configure>", lambda event, c=canvas, s=scrollbar, w=window_id: self._on_scroll_canvas_configure(c, s, w, event))
         self._bind_scroll_recursive(inner, canvas)
         canvas.bind("<MouseWheel>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
         canvas.bind("<Button-4>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
         canvas.bind("<Button-5>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
         self.scroll_canvases.append(canvas)
         return inner
+
+    def _on_scroll_canvas_configure(self, canvas, scrollbar, window_id, event):
+        canvas.itemconfigure(window_id, width=event.width)
+        self._sync_scroll_area(canvas, scrollbar)
+
+    def _sync_scroll_area(self, canvas, scrollbar):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        if self._canvas_needs_vertical_scroll(canvas):
+            if not scrollbar.winfo_ismapped():
+                scrollbar.grid(row=0, column=1, sticky="ns")
+        else:
+            canvas.yview_moveto(0)
+            scrollbar.grid_remove()
+
+    def _canvas_needs_vertical_scroll(self, canvas) -> bool:
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return False
+        content_height = max(0, bbox[3] - bbox[1])
+        visible_height = max(0, canvas.winfo_height())
+        return content_height > visible_height + 1
 
     def _bind_scroll_recursive(self, widget, canvas):
         widget.bind("<MouseWheel>", lambda event, c=canvas: self._scroll_canvas(c, event), add="+")
@@ -276,6 +297,9 @@ class PayrollEditorDialog(tk.Toplevel):
             self._bind_scroll_recursive(child, canvas)
 
     def _scroll_canvas(self, canvas, event):
+        if not self._canvas_needs_vertical_scroll(canvas):
+            canvas.yview_moveto(0)
+            return "break"
         if getattr(event, "num", None) == 4:
             canvas.yview_scroll(-3, "units")
         elif getattr(event, "num", None) == 5:

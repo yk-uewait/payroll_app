@@ -2186,6 +2186,48 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
     )
     return [_row_with_calculation_basis(conn, r) for r in cur.fetchall()]
 
+def payroll_month_exists(conn, target_month: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM payroll_monthly WHERE target_month = ? LIMIT 1",
+        (target_month,),
+    ).fetchone()
+    return row is not None
+
+def list_payroll_copy_source_months(conn) -> list[str]:
+    return [
+        r["target_month"]
+        for r in conn.execute(
+            """
+            SELECT DISTINCT target_month
+            FROM payroll_monthly
+            ORDER BY target_month DESC
+            """
+        ).fetchall()
+        if r["target_month"]
+    ]
+
+def delete_payroll_batch(conn, target_month: str, pay_date_applied: str) -> int:
+    payroll_ids = [
+        int(r["payroll_id"])
+        for r in conn.execute(
+            """
+            SELECT payroll_id
+            FROM payroll_monthly
+            WHERE target_month = ? AND pay_date_applied = ?
+            """,
+            (target_month, pay_date_applied),
+        ).fetchall()
+    ]
+    if not payroll_ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in payroll_ids)
+    conn.execute(f"DELETE FROM payroll_monthly_item_values WHERE monthly_id IN ({placeholders})", payroll_ids)
+    conn.execute(f"DELETE FROM payroll_monthly_social_detail WHERE payroll_id IN ({placeholders})", payroll_ids)
+    cur = conn.execute(f"DELETE FROM payroll_monthly WHERE payroll_id IN ({placeholders})", payroll_ids)
+    conn.commit()
+    return cur.rowcount
+
 def copy_prev_month_inputs(conn, target_month: str, prev_month: str):
     """
     Copy only INPUT FIELDS from prev_month -> target_month.
@@ -4859,6 +4901,26 @@ def list_bonus_batch_rows_by_paydate_year(conn, year: int):
     )
     return cur.fetchall()
 
+def bonus_month_exists(conn, target_month: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM payroll_bonus WHERE target_month = ? LIMIT 1",
+        (target_month,),
+    ).fetchone()
+    return row is not None
+
+def list_bonus_copy_source_months(conn) -> list[str]:
+    return [
+        r["target_month"]
+        for r in conn.execute(
+            """
+            SELECT DISTINCT target_month
+            FROM payroll_bonus
+            ORDER BY target_month DESC
+            """
+        ).fetchall()
+        if r["target_month"]
+    ]
+
 def list_bonus_rows_by_pay_date(conn, target_month: str, pay_date: str):
     cur = conn.cursor()
     cur.execute(
@@ -4879,6 +4941,49 @@ def delete_bonus(conn, bonus_id: int):
     conn.execute("DELETE FROM payroll_bonus WHERE bonus_id=?", (bonus_id,))
     conn.commit()
 
+def delete_bonus_batch(conn, target_month: str, pay_date: str) -> int:
+    bonus_ids = [
+        int(r["bonus_id"])
+        for r in conn.execute(
+            """
+            SELECT bonus_id
+            FROM payroll_bonus
+            WHERE target_month = ? AND pay_date = ?
+            """,
+            (target_month, pay_date),
+        ).fetchall()
+    ]
+    if not bonus_ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in bonus_ids)
+    conn.execute(f"DELETE FROM payroll_bonus_social_detail WHERE bonus_id IN ({placeholders})", bonus_ids)
+    cur = conn.execute(f"DELETE FROM payroll_bonus WHERE bonus_id IN ({placeholders})", bonus_ids)
+    conn.commit()
+    return cur.rowcount
+
+def copy_prev_bonus_inputs(conn, target_month: str, pay_date: str, prev_month: str) -> int:
+    rows = conn.execute(
+        """
+        SELECT employee_id, bonus_amount, note
+        FROM payroll_bonus
+        WHERE target_month = ?
+        """,
+        (prev_month,),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    for r in rows:
+        upsert_bonus(
+            conn,
+            target_month,
+            pay_date,
+            int(r["employee_id"]),
+            int(r["bonus_amount"] or 0),
+            r["note"],
+        )
+    return len(rows)
 
 def _prev_month(ym: str) -> str:
     # ym: yyyy-mm
