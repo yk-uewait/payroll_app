@@ -2044,7 +2044,7 @@ def get_payroll_rows(conn, target_month: str):
         """
         SELECT
           p.*,
-          e.employee_code, e.name_kanji, e.department, e.payday_group,
+          e.employee_code, e.name_kanji, e.department, e.department_id, e.payday_group,
           e.std_monthly_wage, e.std_pension_wage,
           COALESCE(e.is_social_insurance_target, 0) AS is_social_insurance_target,
           COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target,
@@ -2160,7 +2160,7 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
         """
         SELECT
           p.*,
-          e.employee_code, e.name_kanji, e.department, e.payday_group,
+          e.employee_code, e.name_kanji, e.department, e.department_id, e.payday_group,
           e.std_monthly_wage, e.std_pension_wage,
           COALESCE(e.is_social_insurance_target, 0) AS is_social_insurance_target,
           COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target,
@@ -4803,7 +4803,7 @@ def list_bonus_rows(conn, target_month: str):
     cur.execute(
         """
         SELECT b.*,
-               e.employee_code, e.name_kanji, e.department,
+               e.employee_code, e.name_kanji, e.department, e.department_id,
                e.tax_type, e.dependents_count, e.work_prefecture_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
@@ -4820,7 +4820,7 @@ def get_bonus_by_id(conn, bonus_id: int):
     cur.execute(
         """
         SELECT b.*,
-               e.employee_code, e.name_kanji, e.department,
+               e.employee_code, e.name_kanji, e.department, e.department_id,
                e.tax_type, e.dependents_count, e.work_prefecture_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
@@ -4851,7 +4851,7 @@ def get_bonus_by_employee_month(conn, target_month: str, employee_id: int):
     cur.execute(
         """
         SELECT b.*,
-               e.employee_code, e.name_kanji, e.department,
+               e.employee_code, e.name_kanji, e.department, e.department_id,
                e.tax_type, e.dependents_count, e.work_prefecture_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
@@ -5017,7 +5017,7 @@ def list_bonus_rows_by_pay_date(conn, target_month: str, pay_date: str):
     cur.execute(
         """
         SELECT b.*,
-               e.employee_code, e.name_kanji, e.department,
+               e.employee_code, e.name_kanji, e.department, e.department_id,
                e.tax_type, e.dependents_count, e.work_prefecture_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id

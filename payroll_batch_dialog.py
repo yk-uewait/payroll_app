@@ -39,8 +39,11 @@ class PayrollBatchDialog(tk.Toplevel):
         self.employee_header_labels = []
         self.employee_value_widgets = []
         self.output_data_by_payroll_id = {}
+        self.department_options = []
+        self.department_label_to_id = {}
+        self.var_department_filter = tk.StringVar(value="全社")
 
-        self.title("支給控除一覧表")
+        self.title("給与支給控除一覧表")
         self.geometry(app_settings.get_window_geometry("payroll_batch"))
         self.resizable(True, True)
         self.transient(master)
@@ -49,8 +52,20 @@ class PayrollBatchDialog(tk.Toplevel):
 
         hdr = ttk.LabelFrame(self, text="対象")
         hdr.pack(fill="x", padx=10, pady=10)
-        ttk.Label(hdr, text=f"対象年月: {_format_year_month(target_month)}").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(hdr, text=f"支払日: {_format_year_month_day(pay_date_applied)}").grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text="対象年月").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text=_format_year_month(target_month)).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text="支給日").grid(row=0, column=2, padx=(20, 5), pady=5, sticky="w")
+        ttk.Label(hdr, text=_format_year_month_day(pay_date_applied)).grid(row=0, column=3, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text="部署").grid(row=0, column=4, padx=(20, 5), pady=5, sticky="w")
+        self.cmb_department_filter = ttk.Combobox(
+            hdr,
+            textvariable=self.var_department_filter,
+            state="readonly",
+            width=28,
+        )
+        self.cmb_department_filter.grid(row=0, column=5, padx=5, pady=5, sticky="w")
+        self._load_department_filter_options()
+        self.cmb_department_filter.bind("<<ComboboxSelected>>", lambda event: self.refresh())
 
         self._build_matrix_area()
 
@@ -171,6 +186,46 @@ class PayrollBatchDialog(tk.Toplevel):
         widget.bind("<Button-4>", self._on_mousewheel)
         widget.bind("<Button-5>", self._on_mousewheel)
 
+    def _load_department_filter_options(self):
+        self.department_options = [("全社", None)]
+        self.department_label_to_id = {"全社": None}
+        try:
+            for item in db.list_department_hierarchy(self.conn, include_inactive=False):
+                label = item.get("display_name") or item.get("full_name") or item.get("name") or ""
+                if not label:
+                    continue
+                self.department_options.append((label, int(item["id"])))
+                self.department_label_to_id[label] = int(item["id"])
+        except Exception:
+            pass
+        self.cmb_department_filter["values"] = [label for label, _dept_id in self.department_options]
+        if self.var_department_filter.get() not in self.department_label_to_id:
+            self.var_department_filter.set("全社")
+
+    def _selected_department_id(self):
+        return self.department_label_to_id.get(self.var_department_filter.get())
+
+    def _department_filter_ids(self):
+        dept_id = self._selected_department_id()
+        if not dept_id:
+            return None
+        try:
+            ids = db.get_department_descendant_ids(self.conn, int(dept_id))
+        except Exception:
+            ids = set()
+        ids.add(int(dept_id))
+        return ids
+
+    def _row_matches_department_filter(self, row) -> bool:
+        filter_ids = self._department_filter_ids()
+        if filter_ids is None:
+            return True
+        try:
+            row_dept_id = int(row["department_id"] or 0)
+        except Exception:
+            row_dept_id = 0
+        return row_dept_id in filter_ids
+
     def refresh(self):
         def fmt_yen(v):
             if v is None or v == "":
@@ -181,7 +236,7 @@ class PayrollBatchDialog(tk.Toplevel):
                 return str(v)
 
         rows = db.get_payroll_rows_by_pay_date(self.conn, self.target_month, self.pay_date_applied)
-        self.rows_data = list(rows)
+        self.rows_data = [row for row in rows if self._row_matches_department_filter(row)]
         self.output_data_by_payroll_id = {}
         for row in self.rows_data:
             payroll_id = int(row["payroll_id"])
@@ -542,10 +597,18 @@ class PayrollBatchDialog(tk.Toplevel):
             ).fetchall()
         }
         missing = []
+        filter_ids = self._department_filter_ids()
         for employee in db.list_employees(self.conn):
             employee_id = int(employee["employee_id"])
             if employee_id in existing_employee_ids:
                 continue
+            if filter_ids is not None:
+                try:
+                    employee_dept_id = int(employee["department_id"] or 0)
+                except Exception:
+                    employee_dept_id = 0
+                if employee_dept_id not in filter_ids:
+                    continue
             pay_date = self._calc_employee_pay_date(employee)
             if pay_date == self.pay_date_applied:
                 missing.append((employee, pay_date))

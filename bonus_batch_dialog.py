@@ -11,6 +11,22 @@ SEPARATOR_COLOR = "#cbd5e1"
 SEPARATOR_HEIGHT = 2
 
 
+def _format_year_month(value: str) -> str:
+    try:
+        year, month = str(value).split("-", 1)
+        return f"{int(year):04d} 年 {int(month):02d} 月"
+    except Exception:
+        return str(value or "")
+
+
+def _format_year_month_day(value: str) -> str:
+    try:
+        year, month, day = str(value).split("-", 2)
+        return f"{int(year):04d} 年 {int(month):02d} 月 {int(day):02d} 日"
+    except Exception:
+        return str(value or "")
+
+
 class BonusBatchDialog(tk.Toplevel):
     def __init__(self, master, conn, target_month: str, pay_date: str):
         super().__init__(master)
@@ -23,6 +39,9 @@ class BonusBatchDialog(tk.Toplevel):
         self.employee_header_labels = []
         self.employee_value_widgets = []
         self.matrix_row_styles = []
+        self.department_options = []
+        self.department_label_to_id = {}
+        self.var_department_filter = tk.StringVar(value="全社")
 
         self.title("賞与支給控除一覧表")
         self.geometry(app_settings.get_window_geometry("bonus_batch"))
@@ -32,8 +51,20 @@ class BonusBatchDialog(tk.Toplevel):
 
         hdr = ttk.LabelFrame(self, text="対象")
         hdr.pack(fill="x", padx=10, pady=10)
-        ttk.Label(hdr, text=f"対象年月: {target_month}").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(hdr, text=f"支給日: {pay_date}").grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text="対象年月").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text=_format_year_month(target_month)).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text="支給日").grid(row=0, column=2, padx=(20, 5), pady=5, sticky="w")
+        ttk.Label(hdr, text=_format_year_month_day(pay_date)).grid(row=0, column=3, padx=5, pady=5, sticky="w")
+        ttk.Label(hdr, text="部署").grid(row=0, column=4, padx=(20, 5), pady=5, sticky="w")
+        self.cmb_department_filter = ttk.Combobox(
+            hdr,
+            textvariable=self.var_department_filter,
+            state="readonly",
+            width=28,
+        )
+        self.cmb_department_filter.grid(row=0, column=5, padx=5, pady=5, sticky="w")
+        self._load_department_filter_options()
+        self.cmb_department_filter.bind("<<ComboboxSelected>>", lambda event: self.refresh())
 
         self._build_matrix_area()
 
@@ -86,6 +117,46 @@ class BonusBatchDialog(tk.Toplevel):
         self.canvas.xview_scroll(int(-10 * (event.delta / 120)), "units")
         return "break"
 
+    def _load_department_filter_options(self):
+        self.department_options = [("全社", None)]
+        self.department_label_to_id = {"全社": None}
+        try:
+            for item in db.list_department_hierarchy(self.conn, include_inactive=False):
+                label = item.get("display_name") or item.get("full_name") or item.get("name") or ""
+                if not label:
+                    continue
+                self.department_options.append((label, int(item["id"])))
+                self.department_label_to_id[label] = int(item["id"])
+        except Exception:
+            pass
+        self.cmb_department_filter["values"] = [label for label, _dept_id in self.department_options]
+        if self.var_department_filter.get() not in self.department_label_to_id:
+            self.var_department_filter.set("全社")
+
+    def _selected_department_id(self):
+        return self.department_label_to_id.get(self.var_department_filter.get())
+
+    def _department_filter_ids(self):
+        dept_id = self._selected_department_id()
+        if not dept_id:
+            return None
+        try:
+            ids = db.get_department_descendant_ids(self.conn, int(dept_id))
+        except Exception:
+            ids = set()
+        ids.add(int(dept_id))
+        return ids
+
+    def _row_matches_department_filter(self, row) -> bool:
+        filter_ids = self._department_filter_ids()
+        if filter_ids is None:
+            return True
+        try:
+            row_dept_id = int(row["department_id"] or 0)
+        except Exception:
+            row_dept_id = 0
+        return row_dept_id in filter_ids
+
     def refresh(self):
         def fmt_yen(v):
             if v is None or v == "":
@@ -96,7 +167,7 @@ class BonusBatchDialog(tk.Toplevel):
                 return str(v)
 
         rows = db.list_bonus_rows_by_pay_date(self.conn, self.target_month, self.pay_date)
-        self.rows_data = list(rows)
+        self.rows_data = [row for row in rows if self._row_matches_department_filter(row)]
 
         if self.selected_employee_index is not None and self.selected_employee_index >= len(self.rows_data):
             self.selected_employee_index = None
@@ -120,7 +191,6 @@ class BonusBatchDialog(tk.Toplevel):
 
         item_defs = [
             self._row_def("department", "部署", False),
-            self._row_def("pay_date", "支給日", False),
             self._row_def("separator_pay", "", False, row_kind="separator"),
             self._row_def("bonus_amount", "賞与支給額", True, emphasis=True),
             self._row_def("bonus_total", "支給金額合計", True, emphasis=True),
@@ -313,9 +383,28 @@ class BonusBatchDialog(tk.Toplevel):
     def add_bonus(self):
         from ui_bonus import BonusEditorDialog
 
-        existing_ids = {int(row["employee_id"]) for row in self.rows_data}
+        existing_ids = {
+            int(row[0])
+            for row in self.conn.execute(
+                "SELECT employee_id FROM payroll_bonus WHERE target_month = ?",
+                (self.target_month,),
+            ).fetchall()
+        }
         all_employees = db.list_employees(self.conn)
-        missing_ids = {int(e["employee_id"]) for e in all_employees if int(e["employee_id"]) not in existing_ids}
+        filter_ids = self._department_filter_ids()
+        missing_ids = set()
+        for employee in all_employees:
+            employee_id = int(employee["employee_id"])
+            if employee_id in existing_ids:
+                continue
+            if filter_ids is not None:
+                try:
+                    employee_dept_id = int(employee["department_id"] or 0)
+                except Exception:
+                    employee_dept_id = 0
+                if employee_dept_id not in filter_ids:
+                    continue
+            missing_ids.add(employee_id)
         if not missing_ids:
             messagebox.showinfo("確認", "追加できる未入力社員がいません。", parent=self)
             return
