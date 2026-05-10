@@ -153,7 +153,7 @@ class WithholdingOverrideDialog(tk.Toplevel):
 
 
 class PayrollEditorDialog(tk.Toplevel):
-    def __init__(self, master, conn, payroll_id: int, pay_free_names: list[str] | None = None, deduct_free_names: list[str] | None = None):
+    def __init__(self, master, conn, payroll_id: int):
         super().__init__(master)
         self.withdraw()
         self.conn = conn
@@ -384,8 +384,8 @@ class PayrollEditorDialog(tk.Toplevel):
 
         ttk.Button(footer, text="前社員へ", command=lambda: self.navigate_employee(-1)).pack(side="left", padx=(0, 8))
         ttk.Button(footer, text="次社員へ", command=lambda: self.navigate_employee(1)).pack(side="left", padx=(0, 8))
-        ttk.Button(footer, text="保存", command=self.save).pack(side="right", padx=(6, 0))
         ttk.Button(footer, text="閉じる", command=self._close).pack(side="right")
+        ttk.Button(footer, text="保存", command=self.save).pack(side="right", padx=(0, 8))
 
     def _dynamic_total(self, item_kind: str) -> int:
         total = 0
@@ -525,24 +525,9 @@ class PayrollEditorDialog(tk.Toplevel):
                 "overtime_pay",
                 "special_allow",
                 "commute_nontax",
-                "pay_free1",
-                "pay_free2",
-                "pay_free3",
-                "pay_free4",
-                "pay_free5",
-                "travel_saving",
-                "deduct_free1",
-                "deduct_free2",
-                "deduct_free3",
-                "deduct_free4",
-                "deduct_free5",
             ]
             for key in money_keys:
                 data[key] = 0
-            for idx in range(1, 6):
-                data[f"pay_free{idx}_is_taxable"] = 0
-                data[f"pay_free{idx}_is_social_base"] = 0
-                data[f"pay_free{idx}_is_employment_base"] = 0
             data["note"] = self.txt_note.get("1.0", "end-1c").strip()
 
             dynamic_data = {}
@@ -585,7 +570,16 @@ class PayrollEditorDialog(tk.Toplevel):
             messagebox.showwarning("再計算エラー", f"保存後の自動再計算でエラーが発生しました。\n{e}", parent=self)
 
         messagebox.showinfo("保存完了", "保存しました。", parent=self)
+        self._saved_snapshot = self._current_snapshot()
         self._close()
 
     def _close(self):
+        if self._has_unsaved_changes():
+            ok = messagebox.askyesno(
+                "確認",
+                "保存していない変更があります。保存せずに閉じますか？",
+                parent=self,
+            )
+            if not ok:
+                return
         self.destroy()

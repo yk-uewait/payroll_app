@@ -156,7 +156,7 @@ class PayrollFrame(ttk.Frame):
         cols = [
             ("target_month", "対象年月", 90),
             ("pay_date_applied", "支払日", 120),
-            ("employee_count", "人数", 40),
+            ("employee_count", "人数", 46),
             ("taxable_pay_sum", "課税支給額", 100),
             ("non_taxable_pay_sum", "非課税支給額", 100),
             ("gross_pay_sum", "総支給額", 100),

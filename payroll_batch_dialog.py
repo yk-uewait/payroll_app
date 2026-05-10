@@ -203,25 +203,42 @@ class PayrollBatchDialog(tk.Toplevel):
         for child in self.matrix_frame.winfo_children():
             child.destroy()
 
+        def row_def(source, key, title, is_money, row_kind="data", emphasis=False):
+            return {
+                "source": source,
+                "key": key,
+                "title": title,
+                "is_money": is_money,
+                "row_kind": row_kind,
+                "emphasis": emphasis,
+            }
+
         item_defs = [
-            ("field", "department", "部署", False),
+            row_def("field", "department", "部署", False),
+            row_def("separator", "pay", "", False, row_kind="separator"),
             *self._build_pay_item_defs(),
-            ("output", "total_pay", "総支給金額", True),
-            ("field", "emp_ins_employee", "雇用保険料", True),
-            ("field", "health_care_display", "健康保険料", True),
-            ("field", "childcare_support_employee", "子ども・子育て支援金", True),
-            ("field", "pension_ins_employee", "厚生年金保険料", True),
-            ("field", "social_ins_total_calc", "社会保険料合計", True),
-            ("field", "resident_tax_applied", "住民税", True),
-            ("field", "withholding_tax_applied", "所得税", True),
-            ("output", "total_deduction", "控除合計額", True),
-            ("output", "net_pay", "振込金額", True),
+            row_def("output", "non_taxable_pay", "非課税支給額計", True, emphasis=True),
+            row_def("output", "taxable_pay", "課税支給額計", True, emphasis=True),
+            row_def("output", "total_pay", "支給金額合計", True, emphasis=True),
+            row_def("separator", "deduction", "", False, row_kind="separator"),
+            row_def("field", "emp_ins_employee", "雇用保険料", True),
+            row_def("field", "health_care_display", "健康保険料", True),
+            row_def("field", "childcare_support_employee", "子ども・子育て支援金", True),
+            row_def("field", "pension_ins_employee", "厚生年金保険料", True),
+            row_def("field", "social_ins_total_calc", "社会保険料合計", True, emphasis=True),
+            row_def("field", "resident_tax_applied", "住民税", True),
+            row_def("field", "withholding_tax_applied", "所得税", True),
+            *self._build_deduction_item_defs(),
+            row_def("output", "total_deduction", "控除合計額", True, emphasis=True),
+            row_def("separator", "net", "", False, row_kind="separator"),
+            row_def("output", "net_pay", "差引支給額", True, emphasis=True),
         ]
 
         corner_lbl = ttk.Label(
             self.header_frame,
             text="社員番号\n名前",
             anchor="center",
+            justify="center",
             relief="solid",
             padding=4
         )
@@ -230,6 +247,7 @@ class PayrollBatchDialog(tk.Toplevel):
 
         self.employee_header_labels = []
         self.employee_value_widgets = []
+        self.matrix_row_styles = []
 
         for col_idx, row in enumerate(self.rows_data, start=1):
             label_text = f'{row["employee_code"]}\n{row["name_kanji"]}'
@@ -248,13 +266,44 @@ class PayrollBatchDialog(tk.Toplevel):
             self._bind_scroll_events(lbl)
             self.employee_header_labels.append(lbl)
 
-        for row_idx, (source, key, title, is_money) in enumerate(item_defs):
-            title_lbl = ttk.Label(
+        for row_idx, item_def in enumerate(item_defs):
+            source = item_def["source"]
+            key = item_def["key"]
+            title = item_def["title"]
+            is_money = item_def["is_money"]
+            row_kind = item_def["row_kind"]
+            emphasis = item_def["emphasis"]
+            if row_kind == "separator":
+                sep_lbl = tk.Frame(self.matrix_frame, bg="#9ca3af", height=3)
+                sep_lbl.grid(row=row_idx, column=0, sticky="ew")
+                self._bind_scroll_events(sep_lbl)
+
+                line_widgets = []
+                for col_idx, _row in enumerate(self.rows_data, start=1):
+                    sep = tk.Frame(self.matrix_frame, bg="#9ca3af", height=3)
+                    sep.grid(row=row_idx, column=col_idx, sticky="ew")
+                    self._bind_scroll_events(sep)
+                    line_widgets.append(sep)
+                self.employee_value_widgets.append(line_widgets)
+                self.matrix_row_styles.append({"row_kind": row_kind, "emphasis": False, "bg": "#9ca3af"})
+                continue
+
+            title_bg = "#f8fafc" if emphasis else "#f0f0f0"
+            value_bg = "#f8fafc" if emphasis else "white"
+            font = ("TkDefaultFont", 9, "bold") if emphasis else ("TkDefaultFont", 9)
+
+            title_lbl = tk.Label(
                 self.matrix_frame,
                 text=title,
                 anchor="w",
-                relief="solid",
-                padding=4
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=1,
+                highlightbackground="#e5e7eb",
+                padx=6,
+                pady=4,
+                bg=title_bg,
+                font=font,
             )
             title_lbl.grid(row=row_idx, column=0, sticky="nsew")
             self._bind_scroll_events(title_lbl)
@@ -271,13 +320,16 @@ class PayrollBatchDialog(tk.Toplevel):
                 lbl = tk.Label(
                     self.matrix_frame,
                     text=value,
-                    relief="solid",
-                    borderwidth=1,
+                    relief="flat",
+                    borderwidth=0,
+                    highlightthickness=1,
+                    highlightbackground="#e5e7eb",
                     padx=6,
                     pady=4,
                     anchor="e" if is_money else "w",
                     justify="left",
-                    bg="#fcf8e3" if col_idx - 1 == self.selected_employee_index else "white",
+                    bg=value_bg,
+                    font=font,
                 )
                 lbl.grid(row=row_idx, column=col_idx, sticky="nsew")
                 lbl.bind("<Button-1>", lambda e, idx=col_idx - 1: self._set_selected_employee_index(idx))
@@ -285,6 +337,7 @@ class PayrollBatchDialog(tk.Toplevel):
                 self._bind_scroll_events(lbl)
                 line_widgets.append(lbl)
             self.employee_value_widgets.append(line_widgets)
+            self.matrix_row_styles.append({"row_kind": row_kind, "emphasis": emphasis, "bg": value_bg})
 
         self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=170)
         self.header_frame.grid_columnconfigure(0, weight=0, minsize=170)
@@ -300,18 +353,61 @@ class PayrollBatchDialog(tk.Toplevel):
 
     def _build_pay_item_defs(self):
         seen = {}
+        hidden_codes = {f"pay_free{i}" for i in range(1, 6)}
+        hidden_names = {f"支給自由{i}" for i in range(1, 6)}
         for row in self.rows_data:
             output = self.output_data_by_payroll_id.get(int(row["payroll_id"]), {})
             for item in output.get("pay_items", []) or []:
+                code = str(item.get("code") or "")
+                name = str(item.get("name") or "")
+                if code in hidden_codes or name in hidden_names:
+                    continue
                 item_key = item.get("item_id") or item.get("code") or item.get("name")
                 if item_key not in seen:
                     seen[item_key] = {
                         "key": item_key,
-                        "name": item.get("name") or "",
+                        "name": name,
                         "display_order": int(item.get("display_order") or 0),
                     }
         return [
-            ("pay_item", item["key"], item["name"], True)
+            {
+                "source": "pay_item",
+                "key": item["key"],
+                "title": item["name"],
+                "is_money": True,
+                "row_kind": "data",
+                "emphasis": False,
+            }
+            for item in sorted(seen.values(), key=lambda x: (x["display_order"], x["name"]))
+        ]
+
+    def _build_deduction_item_defs(self):
+        seen = {}
+        hidden_codes = {"travel_saving"} | {f"deduct_free{i}" for i in range(1, 6)}
+        hidden_names = {"旅行積立", "旅行積立金"} | {f"控除自由{i}" for i in range(1, 6)}
+        for row in self.rows_data:
+            output = self.output_data_by_payroll_id.get(int(row["payroll_id"]), {})
+            for item in output.get("deduction_items", []) or []:
+                code = str(item.get("code") or "")
+                name = str(item.get("name") or "")
+                if code in hidden_codes or name in hidden_names:
+                    continue
+                item_key = item.get("item_id") or item.get("code") or item.get("name")
+                if item_key not in seen:
+                    seen[item_key] = {
+                        "key": item_key,
+                        "name": name,
+                        "display_order": int(item.get("display_order") or 0),
+                    }
+        return [
+            {
+                "source": "deduction_item",
+                "key": item["key"],
+                "title": item["name"],
+                "is_money": True,
+                "row_kind": "data",
+                "emphasis": False,
+            }
             for item in sorted(seen.values(), key=lambda x: (x["display_order"], x["name"]))
         ]
 
@@ -320,6 +416,8 @@ class PayrollBatchDialog(tk.Toplevel):
             if key == "health_care_display":
                 return int(row["health_ins_employee"] or 0) + int(row["care_ins_employee"] or 0)
             return row[key] if key in row.keys() else ""
+        if source == "separator":
+            return ""
 
         output = self.output_data_by_payroll_id.get(int(row["payroll_id"]), {})
         if source == "output":
@@ -330,15 +428,30 @@ class PayrollBatchDialog(tk.Toplevel):
                 if item_key == key:
                     return item.get("amount", 0)
             return 0
+        if source == "deduction_item":
+            for item in output.get("deduction_items", []) or []:
+                item_key = item.get("item_id") or item.get("code") or item.get("name")
+                if item_key == key:
+                    return item.get("amount", 0)
+            return 0
         return ""
 
     def _apply_selection_highlight(self):
         for idx, lbl in enumerate(self.employee_header_labels):
             lbl.configure(bg="#d9edf7" if idx == self.selected_employee_index else "#f0f0f0")
 
-        for line_widgets in self.employee_value_widgets:
+        for row_idx, line_widgets in enumerate(self.employee_value_widgets):
+            style = self.matrix_row_styles[row_idx] if row_idx < len(self.matrix_row_styles) else {}
+            row_kind = style.get("row_kind")
+            emphasis = style.get("emphasis")
+            default_bg = style.get("bg", "white")
             for idx, lbl in enumerate(line_widgets):
-                lbl.configure(bg="#fcf8e3" if idx == self.selected_employee_index else "white")
+                if row_kind == "separator":
+                    lbl.configure(bg=default_bg)
+                elif idx == self.selected_employee_index:
+                    lbl.configure(bg="#fcf8e3")
+                else:
+                    lbl.configure(bg=default_bg)
  
     def _set_selected_employee_index(self, idx: int, open_editor: bool = False):
         self.selected_employee_index = idx
@@ -365,10 +478,7 @@ class PayrollBatchDialog(tk.Toplevel):
             messagebox.showinfo("確認", "対象社員を選択してください。")
             return
 
-        pay_names = [f"支給自由{i}" for i in range(1, 6)]
-        deduct_names = [f"控除自由{i}" for i in range(1, 6)]
-
-        dlg = PayrollEditorDialog(self, self.conn, payroll_id, pay_names, deduct_names)
+        dlg = PayrollEditorDialog(self, self.conn, payroll_id)
         self.wait_window(dlg)
         self.refresh()
 

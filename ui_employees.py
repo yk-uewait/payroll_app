@@ -1364,7 +1364,7 @@ class EmployeesFrame(ttk.Frame):
 
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", padx=5, pady=5)
-        ttk.Button(btn_frame, text="追加", command=self.add_employee).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="新規作成", command=self.add_employee).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="編集", command=self.edit_selected).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="削除", command=self.delete_selected).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="閉じる", command=self.close_window).pack(side="right", padx=5)
@@ -1619,7 +1619,7 @@ class EmployeesFrame(ttk.Frame):
 
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill="x", padx=5, pady=5)
-        ttk.Button(btn_frame, text="追加", command=self.add_employee).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="新規作成", command=self.add_employee).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="編集", command=self.edit_selected).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="削除", command=self.delete_selected).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="閉じる", command=self.close_window).pack(side="right", padx=5)

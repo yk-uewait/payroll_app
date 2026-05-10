@@ -166,6 +166,20 @@ def soft_delete_payment_schedule(conn, payment_schedule_id: int) -> bool:
     conn.commit()
     return cur.rowcount > 0
 
+def set_payment_schedule_active(conn, payment_schedule_id: int, is_active: int) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE payment_schedules
+        SET is_active = ?,
+            updated_at = datetime('now')
+        WHERE payment_schedule_id = ?
+        """,
+        (int(is_active or 0), payment_schedule_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
 def connect(db_path) -> sqlite3.Connection:
     """
     指定されたDBパスへ接続する。
@@ -711,7 +725,7 @@ def list_department_hierarchy(conn, include_inactive: bool = False):
                     "row": row,
                     "id": row_id,
                     "name": name,
-                    "display_name": f"{'  ' * depth}{name}",
+                    "display_name": f"{'    ' * depth}{name}",
                     "full_name": full_name,
                     "depth": depth,
                     "parent_id": parent_id_value,
@@ -1006,6 +1020,17 @@ def soft_delete_named_master(conn, table: str, row_id: int) -> bool:
     conn.commit()
     return cur.rowcount > 0
 
+def set_named_master_active(conn, table: str, row_id: int, is_active: int) -> bool:
+    if table not in {"departments", "positions", "employment_types"}:
+        raise ValueError("invalid master table")
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE {table} SET is_active=?, updated_at=datetime('now') WHERE id=?",
+        (int(is_active or 0), row_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
 def list_payroll_item_categories(conn, include_inactive: bool = False):
     where = "" if include_inactive else "WHERE is_active = 1"
     cur = conn.cursor()
@@ -1085,6 +1110,15 @@ def soft_delete_payroll_item_category(conn, row_id: int) -> bool:
     conn.commit()
     return cur.rowcount > 0
 
+def set_payroll_item_category_active(conn, row_id: int, is_active: int) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE payroll_item_categories SET is_active=?, updated_at=datetime('now') WHERE id=?",
+        (int(is_active or 0), row_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
 def list_payroll_items(conn, include_inactive: bool = False):
     where = "" if include_inactive else "WHERE pi.is_active = 1"
     cur = conn.cursor()
@@ -1151,6 +1185,15 @@ def soft_delete_payroll_item(conn, row_id: int) -> bool:
     conn.commit()
     return cur.rowcount > 0
 
+def set_payroll_item_active(conn, row_id: int, is_active: int) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE payroll_items SET is_active=?, updated_at=datetime('now') WHERE id=?",
+        (int(is_active or 0), row_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
 def upsert_employee_payroll_item_standard_value(conn, employee_id: int, item_id: int, start_month: str,
                                                 amount: int, is_active: int = 1, memo=None):
     conn.execute(
@@ -1186,6 +1229,15 @@ def list_employee_payroll_item_standard_values(conn, employee_id: int):
 def delete_employee_payroll_item_standard_value(conn, row_id: int) -> bool:
     cur = conn.cursor()
     cur.execute("DELETE FROM employee_payroll_item_standard_values WHERE id = ?", (row_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+def set_employee_payroll_item_standard_value_active(conn, row_id: int, is_active: int) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE employee_payroll_item_standard_values SET is_active=?, updated_at=datetime('now') WHERE id=?",
+        (int(is_active or 0), row_id),
+    )
     conn.commit()
     return cur.rowcount > 0
 
@@ -1500,20 +1552,7 @@ def get_fixed_payroll_row_totals(r) -> dict:
     non_taxable_pay = int(row_get(r, "commute_nontax", 0) or 0)
     employment_insurance_base = taxable_pay
     social_insurance_base = total_pay
-    total_custom_deduction = int(row_get(r, "travel_saving", 0) or 0)
-
-    for i in range(1, 6):
-        pay_amount = int(row_get(r, f"pay_free{i}", 0) or 0)
-        total_pay += pay_amount
-        if int(row_get(r, f"pay_free{i}_is_taxable", 1) or 1):
-            taxable_pay += pay_amount
-        else:
-            non_taxable_pay += pay_amount
-        if int(row_get(r, f"pay_free{i}_is_social_base", 0) or 0):
-            social_insurance_base += pay_amount
-        if int(row_get(r, f"pay_free{i}_is_employment_base", 0) or 0):
-            employment_insurance_base += pay_amount
-        total_custom_deduction += int(row_get(r, f"deduct_free{i}", 0) or 0)
+    total_custom_deduction = 0
 
     return {
         "has_dynamic_items": False,
@@ -1663,25 +1702,10 @@ def _fixed_pay_items_for_output(r) -> list[dict]:
         {"code": code, "name": name, "amount": int(row_get(r, code, 0) or 0), "display_order": order}
         for code, name, order in items
     ]
-    for i in range(1, 6):
-        out.append({
-            "code": f"pay_free{i}",
-            "name": f"支給自由{i}",
-            "amount": int(row_get(r, f"pay_free{i}", 0) or 0),
-            "display_order": 100 + i,
-        })
     return out
 
 def _fixed_deduction_items_for_output(r) -> list[dict]:
-    out = [{"code": "travel_saving", "name": "旅行積立金", "amount": int(row_get(r, "travel_saving", 0) or 0), "display_order": 10}]
-    for i in range(1, 6):
-        out.append({
-            "code": f"deduct_free{i}",
-            "name": f"控除自由{i}",
-            "amount": int(row_get(r, f"deduct_free{i}", 0) or 0),
-            "display_order": 100 + i,
-        })
-    return out
+    return []
 
 def _payroll_output_source_row(conn, payroll_id: int):
     return conn.execute(
@@ -2029,26 +2053,15 @@ def get_payroll_rows(conn, target_month: str):
 
           -- 総支給（入力値の合計：税社保計算はまだ含めない）
           (
-            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax +
-            p.pay_free1 + p.pay_free2 + p.pay_free3 + p.pay_free4 + p.pay_free5
+            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
           ) AS total_pay_input,
 
-          -- 控除合計（旅行積立＋その他控除：税社保住民税等はまだ）
-          (
-            p.travel_saving +
-            p.deduct_free1 + p.deduct_free2 + p.deduct_free3 + p.deduct_free4 + p.deduct_free5
-          ) AS total_deduct_input,
+          -- 控除合計（旧固定控除は廃止済み）
+          0 AS total_deduct_input,
 
           -- 手取り（入力ベース）
           (
-            (
-              p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax +
-              p.pay_free1 + p.pay_free2 + p.pay_free3 + p.pay_free4 + p.pay_free5
-            ) -
-            (
-              p.travel_saving +
-              p.deduct_free1 + p.deduct_free2 + p.deduct_free3 + p.deduct_free4 + p.deduct_free5
-            )
+            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
           ) AS net_pay_input
 
         FROM payroll_monthly p
@@ -2074,14 +2087,10 @@ def get_payroll_batch_rows(conn, target_month: str):
           COUNT(*) AS employee_count,
 
           SUM(
-            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax +
-            p.pay_free1 + p.pay_free2 + p.pay_free3 + p.pay_free4 + p.pay_free5
+            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
           ) AS total_pay_input_sum,
 
-          SUM(
-            p.travel_saving +
-            p.deduct_free1 + p.deduct_free2 + p.deduct_free3 + p.deduct_free4 + p.deduct_free5
-          ) AS total_deduct_input_sum,
+          0 AS total_deduct_input_sum,
 
           SUM(
             COALESCE(p.emp_ins_employee, 0) +
@@ -2090,16 +2099,12 @@ def get_payroll_batch_rows(conn, target_month: str):
             COALESCE(p.childcare_support_employee, 0) +
             COALESCE(p.pension_ins_employee, 0) +
             COALESCE(p.resident_tax_applied, 0) +
-            COALESCE(p.withholding_tax_applied, 0) +
-            COALESCE(p.travel_saving, 0) +
-            COALESCE(p.deduct_free1, 0) + COALESCE(p.deduct_free2, 0) + COALESCE(p.deduct_free3, 0) +
-            COALESCE(p.deduct_free4, 0) + COALESCE(p.deduct_free5, 0)
+            COALESCE(p.withholding_tax_applied, 0)
           ) AS total_deduct_all_sum,
 
           SUM(
             (
-              p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax +
-              p.pay_free1 + p.pay_free2 + p.pay_free3 + p.pay_free4 + p.pay_free5
+              p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
             ) -
             (
               COALESCE(p.emp_ins_employee, 0) +
@@ -2108,10 +2113,7 @@ def get_payroll_batch_rows(conn, target_month: str):
               COALESCE(p.childcare_support_employee, 0) +
               COALESCE(p.pension_ins_employee, 0) +
               COALESCE(p.resident_tax_applied, 0) +
-              COALESCE(p.withholding_tax_applied, 0) +
-              COALESCE(p.travel_saving, 0) +
-              COALESCE(p.deduct_free1, 0) + COALESCE(p.deduct_free2, 0) + COALESCE(p.deduct_free3, 0) +
-              COALESCE(p.deduct_free4, 0) + COALESCE(p.deduct_free5, 0)
+              COALESCE(p.withholding_tax_applied, 0)
             )
           ) AS net_pay_sum
 
@@ -2135,109 +2137,6 @@ def get_payroll_batch_rows_by_target_year(conn, year: int):
     ).fetchall():
         rows.extend(get_payroll_rows(conn, r["target_month"]))
     return _aggregate_payroll_basis_rows(rows, conn)
-
-    return _aggregate_payroll_basis_rows(get_payroll_rows(conn, target_month), conn)
-
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT
-          p.target_month,
-          p.pay_date_applied,
-          COUNT(*) AS employee_count,
-          SUM(
-            COALESCE(p.officer_pay, 0) +
-            COALESCE(p.base_salary, 0) +
-            COALESCE(p.deemed_ot, 0) +
-            COALESCE(p.overtime_pay, 0) +
-            COALESCE(p.special_allow, 0) +
-            CASE WHEN COALESCE(p.pay_free1_is_taxable, 0) = 1 THEN COALESCE(p.pay_free1, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free2_is_taxable, 0) = 1 THEN COALESCE(p.pay_free2, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free3_is_taxable, 0) = 1 THEN COALESCE(p.pay_free3, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free4_is_taxable, 0) = 1 THEN COALESCE(p.pay_free4, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free5_is_taxable, 0) = 1 THEN COALESCE(p.pay_free5, 0) ELSE 0 END
-          ) AS taxable_pay_sum,
-          SUM(
-            COALESCE(p.commute_nontax, 0) +
-            CASE WHEN COALESCE(p.pay_free1_is_taxable, 0) = 0 THEN COALESCE(p.pay_free1, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free2_is_taxable, 0) = 0 THEN COALESCE(p.pay_free2, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free3_is_taxable, 0) = 0 THEN COALESCE(p.pay_free3, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free4_is_taxable, 0) = 0 THEN COALESCE(p.pay_free4, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free5_is_taxable, 0) = 0 THEN COALESCE(p.pay_free5, 0) ELSE 0 END
-          ) AS non_taxable_pay_sum,
-          SUM(
-            COALESCE(p.officer_pay, 0) +
-            COALESCE(p.base_salary, 0) +
-            COALESCE(p.deemed_ot, 0) +
-            COALESCE(p.overtime_pay, 0) +
-            COALESCE(p.special_allow, 0) +
-            COALESCE(p.commute_nontax, 0) +
-            COALESCE(p.pay_free1, 0) +
-            COALESCE(p.pay_free2, 0) +
-            COALESCE(p.pay_free3, 0) +
-            COALESCE(p.pay_free4, 0) +
-            COALESCE(p.pay_free5, 0)
-          ) AS gross_pay_sum,
-          SUM(COALESCE(p.social_ins_total_calc, 0)) AS social_ins_sum,
-          SUM(COALESCE(p.withholding_tax_applied, 0)) AS withholding_tax_sum,
-          SUM(COALESCE(p.resident_tax_applied, 0)) AS resident_tax_sum,
-          SUM(
-            COALESCE(p.travel_saving, 0) +
-            COALESCE(p.deduct_free1, 0) +
-            COALESCE(p.deduct_free2, 0) +
-            COALESCE(p.deduct_free3, 0) +
-            COALESCE(p.deduct_free4, 0) +
-            COALESCE(p.deduct_free5, 0)
-          ) AS other_deduct_sum,
-          SUM(
-            COALESCE(p.social_ins_total_calc, 0) +
-            COALESCE(p.withholding_tax_applied, 0) +
-            COALESCE(p.resident_tax_applied, 0) +
-            COALESCE(p.travel_saving, 0) +
-            COALESCE(p.deduct_free1, 0) +
-            COALESCE(p.deduct_free2, 0) +
-            COALESCE(p.deduct_free3, 0) +
-           COALESCE(p.deduct_free4, 0) +
-            COALESCE(p.deduct_free5, 0)
-          ) AS total_deduct_sum,
-          SUM(
-            (
-              COALESCE(p.officer_pay, 0) +
-              COALESCE(p.base_salary, 0) +
-             COALESCE(p.deemed_ot, 0) +
-              COALESCE(p.overtime_pay, 0) +
-              COALESCE(p.special_allow, 0) +
-             COALESCE(p.commute_nontax, 0) +
-              COALESCE(p.pay_free1, 0) +
-              COALESCE(p.pay_free2, 0) +
-              COALESCE(p.pay_free3, 0) +
-              COALESCE(p.pay_free4, 0) +
-              COALESCE(p.pay_free5, 0)
-            ) -
-            (
-              COALESCE(p.social_ins_total_calc, 0) +
-             COALESCE(p.withholding_tax_applied, 0) +
-             COALESCE(p.resident_tax_applied, 0) +
-              COALESCE(p.travel_saving, 0) +
-              COALESCE(p.deduct_free1, 0) +
-              COALESCE(p.deduct_free2, 0) +
-              COALESCE(p.deduct_free3, 0) +
-              COALESCE(p.deduct_free4, 0) +
-              COALESCE(p.deduct_free5, 0)
-            )
-          ) AS net_pay_sum
-        FROM payroll_monthly p
-        WHERE substr(p.target_month,1,4)=?
-        GROUP BY p.target_month, p.pay_date_applied
-        ORDER BY p.pay_date_applied
-        """,
-        (str(year),),
-    )
-    return cur.fetchall()
-
-# ==============================
-# 年別一覧（支給日基準）
-# ==============================
 def get_payroll_batch_rows_by_paydate_year(conn, year: int):
     rows = []
     target_months = conn.execute(
@@ -2250,103 +2149,6 @@ def get_payroll_batch_rows_by_paydate_year(conn, year: int):
             if str(row_get(row, "pay_date_applied", "") or "").startswith(str(year))
         )
     return _aggregate_payroll_basis_rows(rows, conn)
-
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT
-          p.target_month,
-          p.pay_date_applied,
-          COUNT(*) AS employee_count,
-          SUM(
-            COALESCE(p.officer_pay, 0) +
-            COALESCE(p.base_salary, 0) +
-            COALESCE(p.deemed_ot, 0) +
-            COALESCE(p.overtime_pay, 0) +
-            COALESCE(p.special_allow, 0) +
-           CASE WHEN COALESCE(p.pay_free1_is_taxable, 0) = 1 THEN COALESCE(p.pay_free1, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free2_is_taxable, 0) = 1 THEN COALESCE(p.pay_free2, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free3_is_taxable, 0) = 1 THEN COALESCE(p.pay_free3, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free4_is_taxable, 0) = 1 THEN COALESCE(p.pay_free4, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free5_is_taxable, 0) = 1 THEN COALESCE(p.pay_free5, 0) ELSE 0 END
-          ) AS taxable_pay_sum,
-          SUM(
-            COALESCE(p.commute_nontax, 0) +
-            CASE WHEN COALESCE(p.pay_free1_is_taxable, 0) = 0 THEN COALESCE(p.pay_free1, 0) ELSE 0 END +
-           CASE WHEN COALESCE(p.pay_free2_is_taxable, 0) = 0 THEN COALESCE(p.pay_free2, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free3_is_taxable, 0) = 0 THEN COALESCE(p.pay_free3, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free4_is_taxable, 0) = 0 THEN COALESCE(p.pay_free4, 0) ELSE 0 END +
-            CASE WHEN COALESCE(p.pay_free5_is_taxable, 0) = 0 THEN COALESCE(p.pay_free5, 0) ELSE 0 END
-          ) AS non_taxable_pay_sum,
-          SUM(
-            COALESCE(p.officer_pay, 0) +
-            COALESCE(p.base_salary, 0) +
-            COALESCE(p.deemed_ot, 0) +
-            COALESCE(p.overtime_pay, 0) +
-            COALESCE(p.special_allow, 0) +
-            COALESCE(p.commute_nontax, 0) +
-           COALESCE(p.pay_free1, 0) +
-            COALESCE(p.pay_free2, 0) +
-           COALESCE(p.pay_free3, 0) +
-            COALESCE(p.pay_free4, 0) +
-            COALESCE(p.pay_free5, 0)
-          ) AS gross_pay_sum,
-          SUM(COALESCE(p.social_ins_total_calc, 0)) AS social_ins_sum,
-         SUM(COALESCE(p.withholding_tax_applied, 0)) AS withholding_tax_sum,
-          SUM(COALESCE(p.resident_tax_applied, 0)) AS resident_tax_sum,
-          SUM(
-            COALESCE(p.travel_saving, 0) +
-            COALESCE(p.deduct_free1, 0) +
-            COALESCE(p.deduct_free2, 0) +
-           COALESCE(p.deduct_free3, 0) +
-            COALESCE(p.deduct_free4, 0) +
-            COALESCE(p.deduct_free5, 0)
-          ) AS other_deduct_sum,
-          SUM(
-            COALESCE(p.social_ins_total_calc, 0) +
-            COALESCE(p.withholding_tax_applied, 0) +
-            COALESCE(p.resident_tax_applied, 0) +
-            COALESCE(p.travel_saving, 0) +
-            COALESCE(p.deduct_free1, 0) +
-            COALESCE(p.deduct_free2, 0) +
-            COALESCE(p.deduct_free3, 0) +
-            COALESCE(p.deduct_free4, 0) +
-            COALESCE(p.deduct_free5, 0)
-          ) AS total_deduct_sum,
-          SUM(
-            (
-              COALESCE(p.officer_pay, 0) +
-              COALESCE(p.base_salary, 0) +
-              COALESCE(p.deemed_ot, 0) +
-              COALESCE(p.overtime_pay, 0) +
-              COALESCE(p.special_allow, 0) +
-              COALESCE(p.commute_nontax, 0) +
-              COALESCE(p.pay_free1, 0) +
-              COALESCE(p.pay_free2, 0) +
-              COALESCE(p.pay_free3, 0) +
-              COALESCE(p.pay_free4, 0) +
-              COALESCE(p.pay_free5, 0)
-            ) -
-            (
-              COALESCE(p.social_ins_total_calc, 0) +
-              COALESCE(p.withholding_tax_applied, 0) +
-              COALESCE(p.resident_tax_applied, 0) +
-              COALESCE(p.travel_saving, 0) +
-              COALESCE(p.deduct_free1, 0) +
-             COALESCE(p.deduct_free2, 0) +
-              COALESCE(p.deduct_free3, 0) +
-              COALESCE(p.deduct_free4, 0) +
-              COALESCE(p.deduct_free5, 0)
-           )
-          ) AS net_pay_sum
-        FROM payroll_monthly p
-        WHERE substr(p.pay_date_applied,1,4)=?
-        GROUP BY p.target_month, p.pay_date_applied
-        ORDER BY p.pay_date_applied
-        """,
-        (str(year),),
-    )
-    return cur.fetchall()
 
 def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str):
     """
@@ -2366,24 +2168,13 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
           e.hire_date, e.leave_date,
 
           (
-            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax +
-            p.pay_free1 + p.pay_free2 + p.pay_free3 + p.pay_free4 + p.pay_free5
+            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
           ) AS total_pay_input,
 
-          (
-            p.travel_saving +
-            p.deduct_free1 + p.deduct_free2 + p.deduct_free3 + p.deduct_free4 + p.deduct_free5
-          ) AS total_deduct_input,
+          0 AS total_deduct_input,
 
           (
-            (
-              p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax +
-              p.pay_free1 + p.pay_free2 + p.pay_free3 + p.pay_free4 + p.pay_free5
-            ) -
-            (
-              p.travel_saving +
-              p.deduct_free1 + p.deduct_free2 + p.deduct_free3 + p.deduct_free4 + p.deduct_free5
-            )
+            p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
           ) AS net_pay_input
 
         FROM payroll_monthly p
@@ -2409,25 +2200,18 @@ def copy_prev_month_inputs(conn, target_month: str, prev_month: str):
             """
             UPDATE payroll_monthly SET
               officer_pay=?, base_salary=?, deemed_ot=?, overtime_pay=?, special_allow=?, commute_nontax=?,
-              pay_free1=?, pay_free2=?, pay_free3=?, pay_free4=?, pay_free5=?,
-              pay_free1_is_taxable=?, pay_free1_is_social_base=?, pay_free1_is_employment_base=?,
-              pay_free2_is_taxable=?, pay_free2_is_social_base=?, pay_free2_is_employment_base=?,
-              pay_free3_is_taxable=?, pay_free3_is_social_base=?, pay_free3_is_employment_base=?,
-              pay_free4_is_taxable=?, pay_free4_is_social_base=?, pay_free4_is_employment_base=?,
-              pay_free5_is_taxable=?, pay_free5_is_social_base=?, pay_free5_is_employment_base=?,
-              travel_saving=?, deduct_free1=?, deduct_free2=?, deduct_free3=?, deduct_free4=?, deduct_free5=?,
+              pay_free1=0, pay_free2=0, pay_free3=0, pay_free4=0, pay_free5=0,
+              pay_free1_is_taxable=0, pay_free1_is_social_base=0, pay_free1_is_employment_base=0,
+              pay_free2_is_taxable=0, pay_free2_is_social_base=0, pay_free2_is_employment_base=0,
+              pay_free3_is_taxable=0, pay_free3_is_social_base=0, pay_free3_is_employment_base=0,
+              pay_free4_is_taxable=0, pay_free4_is_social_base=0, pay_free4_is_employment_base=0,
+              pay_free5_is_taxable=0, pay_free5_is_social_base=0, pay_free5_is_employment_base=0,
+              travel_saving=0, deduct_free1=0, deduct_free2=0, deduct_free3=0, deduct_free4=0, deduct_free5=0,
               updated_at=datetime('now')
             WHERE target_month=? AND employee_id=?
             """,
             (
                 r["officer_pay"], r["base_salary"], r["deemed_ot"], r["overtime_pay"], r["special_allow"], r["commute_nontax"],
-                r["pay_free1"], r["pay_free2"], r["pay_free3"], r["pay_free4"], r["pay_free5"],
-                r["pay_free1_is_taxable"], r["pay_free1_is_social_base"], r["pay_free1_is_employment_base"],
-                r["pay_free2_is_taxable"], r["pay_free2_is_social_base"], r["pay_free2_is_employment_base"],
-                r["pay_free3_is_taxable"], r["pay_free3_is_social_base"], r["pay_free3_is_employment_base"],
-                r["pay_free4_is_taxable"], r["pay_free4_is_social_base"], r["pay_free4_is_employment_base"],
-                r["pay_free5_is_taxable"], r["pay_free5_is_social_base"], r["pay_free5_is_employment_base"],
-                r["travel_saving"], r["deduct_free1"], r["deduct_free2"], r["deduct_free3"], r["deduct_free4"], r["deduct_free5"],
                 target_month, employee_id
             ),
         )
@@ -2473,18 +2257,11 @@ def update_payroll_inputs(conn, payroll_id: int, data: dict):
     """
     cols = [
         "officer_pay", "base_salary", "deemed_ot", "overtime_pay", "special_allow", "commute_nontax",
-        "pay_free1", "pay_free2", "pay_free3", "pay_free4", "pay_free5",
-        "pay_free1_is_taxable", "pay_free1_is_social_base", "pay_free1_is_employment_base",
-        "pay_free2_is_taxable", "pay_free2_is_social_base", "pay_free2_is_employment_base",
-        "pay_free3_is_taxable", "pay_free3_is_social_base", "pay_free3_is_employment_base",
-        "pay_free4_is_taxable", "pay_free4_is_social_base", "pay_free4_is_employment_base",
-        "pay_free5_is_taxable", "pay_free5_is_social_base", "pay_free5_is_employment_base",
-        "travel_saving", "deduct_free1", "deduct_free2", "deduct_free3", "deduct_free4", "deduct_free5",
         "note",
     ]
 
     sets = ", ".join([f"{c}=?" for c in cols]) + ", updated_at=datetime('now')"
-    values = [data.get(c) for c in cols] + [payroll_id]
+    values = [data.get(c, "" if c == "note" else 0) for c in cols] + [payroll_id]
 
     cur = conn.cursor()
     cur.execute(f"UPDATE payroll_monthly SET {sets} WHERE payroll_id=?", values)
@@ -3314,11 +3091,6 @@ def _calc_taxable_pay_from_payroll_row(r, conn=None) -> int:
     base += int(r["overtime_pay"])
     base += int(r["special_allow"])
     # commute_nontax は除外
-    for i in range(1, 6):
-        amt = int(r[f"pay_free{i}"])
-        flag = int((row_get(r,f"pay_free{i}_is_taxable", 1) or 1))
-        if flag == 1:
-            base += amt
     return max(0, base)
 
 
@@ -3657,12 +3429,6 @@ def _calc_emp_ins_base_from_payroll_row(r, conn=None) -> int:
     # commute_nontax は除外
 
     # 自由支給（雇保対象フラグ）
-    for i in range(1, 6):
-        amt = int(r[f"pay_free{i}"])
-        flag = int(r[f"pay_free{i}_is_employment_base"])
-        if flag == 1:
-            base += amt
-
     # マイナス防止
     if base < 0:
         base = 0
@@ -4438,11 +4204,6 @@ def export_pay_deduct_report_month(conn, target_month: str, file_path: str) -> N
             ("残業(みなし)", row_get(r, "deemed_ot", 0)),
             ("残業", row_get(r, "overtime_pay", 0)),
             ("非課税通勤", row_get(r, "commute_nontax", 0)),
-            ("自由支給1", row_get(r, "pay_free1", 0)),
-            ("自由支給2", row_get(r, "pay_free2", 0)),
-            ("自由支給3", row_get(r, "pay_free3", 0)),
-            ("自由支給4", row_get(r, "pay_free4", 0)),
-            ("自由支給5", row_get(r, "pay_free5", 0)),
         ]
         for label, val in pay_items:
             write_text(r0, 2, label)
@@ -4467,12 +4228,6 @@ def export_pay_deduct_report_month(conn, target_month: str, file_path: str) -> N
             ("雇用保険料", row_get(r, "emp_ins_employee", 0)),
             ("所得税", row_get(r, "withholding_tax_applied", 0)),
             ("住民税", row_get(r, "resident_tax_applied", 0)),
-            ("旅行積立", row_get(r, "travel_saving", 0)),
-            ("自由控除1", row_get(r, "deduct_free1", 0)),
-            ("自由控除2", row_get(r, "deduct_free2", 0)),
-            ("自由控除3", row_get(r, "deduct_free3", 0)),
-            ("自由控除4", row_get(r, "deduct_free4", 0)),
-            ("自由控除5", row_get(r, "deduct_free5", 0)),
         ]
         for label, val in deduct_items:
             write_text(r0, 2, label)
@@ -4513,30 +4268,14 @@ def _calc_gross_pay_from_payroll_row(row) -> int:
         + int(row_get(row, "deemed_ot", 0) or 0)
         + int(row_get(row, "overtime_pay", 0) or 0)
         + int(row_get(row, "commute_nontax", 0) or 0)
-        + int(row_get(row, "pay_free1", 0) or 0)
-        + int(row_get(row, "pay_free2", 0) or 0)
-        + int(row_get(row, "pay_free3", 0) or 0)
-        + int(row_get(row, "pay_free4", 0) or 0)
-        + int(row_get(row, "pay_free5", 0) or 0)
     )
 
 def _other_deductions_total(row) -> int:
     """法定控除以外の控除合計。"""
-    return (
-        int(row_get(row, "travel_saving", 0) or 0)
-        + int(row_get(row, "deduct_free1", 0) or 0)
-        + int(row_get(row, "deduct_free2", 0) or 0)
-        + int(row_get(row, "deduct_free3", 0) or 0)
-        + int(row_get(row, "deduct_free4", 0) or 0)
-        + int(row_get(row, "deduct_free5", 0) or 0)
-    )
+    return 0
 
 def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
-    """
-    賃金台帳（1ヶ月分）をExcel出力する。
-    見せ方B:
-      健康保険料（介護保険料）→ 子ども・子育て支援金 → 厚生年金保険料 → 雇用保険料
-    """
+    """賃金台帳（月単位）をExcel出力する。旧固定自由項目は出力しない。"""
     rows = get_payroll_rows(conn, target_month)
 
     from openpyxl import Workbook
@@ -4551,14 +4290,11 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
         "対象年月", "支払日",
         "社員番号", "氏名", "部署",
         "基本給", "役員報酬", "手当", "残業(みなし)", "残業", "非課税通勤",
-        "自由支給1", "自由支給2", "自由支給3", "自由支給4", "自由支給5",
         "総支給",
-        "健康保険料（介護保険料）", "子ども・子育て支援金", "厚生年金保険料", "雇用保険料",
+        "健康保険料(介護保険料含む)", "子ども・子育て支援金", "厚生年金保険料", "雇用保険料",
         "所得税", "住民税",
-        "旅行積立",
-        "自由控除1", "自由控除2", "自由控除3", "自由控除4", "自由控除5",
         "控除合計", "差引支給額",
-        "備考"
+        "備考",
     ]
 
     ws.append(headers)
@@ -4583,16 +4319,7 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
         withholding_tax = int(row_get(r, "withholding_tax_applied", 0) or 0)
         resident_tax = int(row_get(r, "resident_tax_applied", 0) or 0)
 
-        deduct_total = (
-            health_care
-            + childcare
-            + pension
-            + emp_ins
-            + withholding_tax
-            + resident_tax
-            + _other_deductions_total(r)
-        )
-
+        deduct_total = health_care + childcare + pension + emp_ins + withholding_tax + resident_tax
         net = gross - deduct_total
 
         data = [
@@ -4607,11 +4334,6 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
             int(row_get(r, "deemed_ot", 0) or 0),
             int(row_get(r, "overtime_pay", 0) or 0),
             int(row_get(r, "commute_nontax", 0) or 0),
-            int(row_get(r, "pay_free1", 0) or 0),
-            int(row_get(r, "pay_free2", 0) or 0),
-            int(row_get(r, "pay_free3", 0) or 0),
-            int(row_get(r, "pay_free4", 0) or 0),
-            int(row_get(r, "pay_free5", 0) or 0),
             gross,
             health_care,
             childcare,
@@ -4619,27 +4341,17 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
             emp_ins,
             withholding_tax,
             resident_tax,
-            int(row_get(r, "travel_saving", 0) or 0),
-            int(row_get(r, "deduct_free1", 0) or 0),
-            int(row_get(r, "deduct_free2", 0) or 0),
-            int(row_get(r, "deduct_free3", 0) or 0),
-            int(row_get(r, "deduct_free4", 0) or 0),
-            int(row_get(r, "deduct_free5", 0) or 0),
             deduct_total,
             net,
             row_get(r, "note", ""),
         ]
         ws.append(data)
 
-    # 数値列
     money_headers = {
         "基本給", "役員報酬", "手当", "残業(みなし)", "残業", "非課税通勤",
-        "自由支給1", "自由支給2", "自由支給3", "自由支給4", "自由支給5",
         "総支給",
-        "健康保険料（介護保険料）", "子ども・子育て支援金", "厚生年金保険料", "雇用保険料",
+        "健康保険料(介護保険料含む)", "子ども・子育て支援金", "厚生年金保険料", "雇用保険料",
         "所得税", "住民税",
-        "旅行積立",
-        "自由控除1", "自由控除2", "自由控除3", "自由控除4", "自由控除5",
         "控除合計", "差引支給額",
     }
     money_cols_idx = [i for i, h in enumerate(headers, start=1) if h in money_headers]
@@ -4650,29 +4362,23 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
             cell.number_format = "#,##0"
             cell.alignment = align_right
 
-    # 文字列列
     text_cols_idx = [1, 2, 3, 4, 5, len(headers)]
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         for ci in text_cols_idx:
             row[ci - 1].alignment = align_left
 
-    # 列幅
     widths = {
         1: 10, 2: 12, 3: 12, 4: 14, 5: 14,
         6: 12, 7: 12, 8: 12, 9: 12, 10: 12, 11: 12,
-        12: 12, 13: 12, 14: 12, 15: 12, 16: 12,
-        17: 12,
-        18: 18, 19: 14, 20: 14, 21: 12,
-        22: 12, 23: 12,
-        24: 12, 25: 12, 26: 12, 27: 12, 28: 12, 29: 12,
-        30: 12, 31: 12, 32: 24,
+        12: 12,
+        13: 20, 14: 16, 15: 16, 16: 12,
+        17: 12, 18: 12,
+        19: 12, 20: 12, 21: 24,
     }
     for ci, w in widths.items():
         ws.column_dimensions[get_column_letter(ci)].width = w
 
     wb.save(file_path)
-
-
 def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis: str = "target") -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
@@ -4933,7 +4639,6 @@ def export_wage_ledger_year(conn, year: int, file_path: str, basis: str = "targe
     headers = [
         "月",
         "基本給", "役員報酬", "手当", "残業(みなし)", "残業", "非課税通勤",
-        "自由支給合計",
         "総支給",
         "健康保険料（介護保険料）", "子ども・子育て支援金", "厚生年金保険料", "雇用保険料",
         "所得税", "住民税",
@@ -4974,14 +4679,6 @@ def export_wage_ledger_year(conn, year: int, file_path: str, basis: str = "targe
             if r is None:
                 values = [mm] + [0] * (len(headers) - 1)
             else:
-                free_pay_total = (
-                    int(row_get(r, "pay_free1", 0) or 0)
-                    + int(row_get(r, "pay_free2", 0) or 0)
-                    + int(row_get(r, "pay_free3", 0) or 0)
-                    + int(row_get(r, "pay_free4", 0) or 0)
-                    + int(row_get(r, "pay_free5", 0) or 0)
-                )
-
                 gross = _calc_gross_pay_from_payroll_row(r)
 
                 health_care = _health_care_display_amount(r)
@@ -5012,7 +4709,6 @@ def export_wage_ledger_year(conn, year: int, file_path: str, basis: str = "targe
                     int(row_get(r, "deemed_ot", 0) or 0),
                     int(row_get(r, "overtime_pay", 0) or 0),
                     int(row_get(r, "commute_nontax", 0) or 0),
-                    free_pay_total,
                     gross,
                     health_care,
                     childcare,
@@ -5613,3 +5309,4 @@ def has_employment_insurance_in_wage_period(hire_date, leave_date, wage_period_s
             return False
 
     return True
+

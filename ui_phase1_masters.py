@@ -184,9 +184,10 @@ class NamedMasterFrame(ttk.Frame):
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
-        ttk.Button(btns, text="上へ", command=lambda: self.move_selected("up")).pack(side="left", padx=5)
-        ttk.Button(btns, text="下へ", command=lambda: self.move_selected("down")).pack(side="left", padx=5)
-        ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="削除", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="↑", width=3, command=lambda: self.move_selected("up")).pack(side="left", padx=3)
+        ttk.Button(btns, text="↓", width=3, command=lambda: self.move_selected("down")).pack(side="left", padx=3)
         ttk.Button(btns, text="閉じる", command=self.close_window).pack(side="right", padx=5)
         self.refresh()
         enable_enter_key_navigation(self)
@@ -225,9 +226,17 @@ class NamedMasterFrame(ttk.Frame):
         if not row:
             messagebox.showinfo("確認", "行を選択してください。", parent=self)
             return
-        if messagebox.askyesno("確認", f"{row['name']} を無効化しますか？", parent=self):
+        if messagebox.askyesno("確認", f"{row['name']} を削除しますか？", parent=self):
             db.soft_delete_named_master(self.conn, self.table, row["id"])
-            self.refresh()
+            self.refresh(select_id=row["id"])
+
+    def toggle_active_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        db.set_named_master_active(self.conn, self.table, row["id"], 0 if row["is_active"] else 1)
+        self.refresh(select_id=row["id"])
 
     def move_selected(self, direction):
         row = self._selected_row()
@@ -393,9 +402,10 @@ class DepartmentMasterFrame(ttk.Frame):
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
-        ttk.Button(btns, text="上へ", command=lambda: self.move_selected("up")).pack(side="left", padx=5)
-        ttk.Button(btns, text="下へ", command=lambda: self.move_selected("down")).pack(side="left", padx=5)
-        ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="削除", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="↑", width=3, command=lambda: self.move_selected("up")).pack(side="left", padx=3)
+        ttk.Button(btns, text="↓", width=3, command=lambda: self.move_selected("down")).pack(side="left", padx=3)
         ttk.Button(btns, text="閉じる", command=self.close_window).pack(side="right", padx=5)
         self.refresh()
         enable_enter_key_navigation(self)
@@ -446,9 +456,17 @@ class DepartmentMasterFrame(ttk.Frame):
         if not row:
             messagebox.showinfo("確認", "行を選択してください。", parent=self)
             return
-        if messagebox.askyesno("確認", f"{row['name']} を無効化しますか？", parent=self):
+        if messagebox.askyesno("確認", f"{row['name']} を削除しますか？", parent=self):
             db.soft_delete_named_master(self.conn, "departments", row["id"])
-            self.refresh()
+            self.refresh(select_id=row["id"])
+
+    def toggle_active_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        db.set_named_master_active(self.conn, "departments", row["id"], 0 if row["is_active"] else 1)
+        self.refresh(select_id=row["id"])
 
     def move_selected(self, direction):
         row = self._selected_row()
@@ -568,9 +586,10 @@ class PayrollCategoryFrame(ttk.Frame):
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
-        ttk.Button(btns, text="上へ", command=lambda: self.move_selected("up")).pack(side="left", padx=5)
-        ttk.Button(btns, text="下へ", command=lambda: self.move_selected("down")).pack(side="left", padx=5)
-        ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="削除", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="↑", width=3, command=lambda: self.move_selected("up")).pack(side="left", padx=3)
+        ttk.Button(btns, text="↓", width=3, command=lambda: self.move_selected("down")).pack(side="left", padx=3)
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
 
     def refresh(self, select_id=None):
@@ -616,9 +635,20 @@ class PayrollCategoryFrame(ttk.Frame):
 
     def disable_selected(self):
         row = self._selected_row()
-        if row and messagebox.askyesno("確認", f"{row['name']} を無効化しますか？", parent=self):
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        if messagebox.askyesno("確認", f"{row['name']} を削除しますか？", parent=self):
             db.soft_delete_payroll_item_category(self.conn, row["id"])
-            self.refresh()
+            self.refresh(select_id=row["id"])
+
+    def toggle_active_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        db.set_payroll_item_category_active(self.conn, row["id"], 0 if row["is_active"] else 1)
+        self.refresh(select_id=row["id"])
 
     def move_selected(self, direction):
         row = self._selected_row()
@@ -781,9 +811,10 @@ class PayrollItemFrame(ttk.Frame):
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
-        ttk.Button(btns, text="上へ", command=lambda: self.move_selected("up")).pack(side="left", padx=5)
-        ttk.Button(btns, text="下へ", command=lambda: self.move_selected("down")).pack(side="left", padx=5)
-        ttk.Button(btns, text="無効化", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="削除", command=self.disable_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="↑", width=3, command=lambda: self.move_selected("up")).pack(side="left", padx=3)
+        ttk.Button(btns, text="↓", width=3, command=lambda: self.move_selected("down")).pack(side="left", padx=3)
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
         self.refresh()
         enable_enter_key_navigation(self)
@@ -836,9 +867,20 @@ class PayrollItemFrame(ttk.Frame):
 
     def disable_selected(self):
         row = self._selected_row()
-        if row and messagebox.askyesno("確認", f"{row['name']} を無効化しますか？", parent=self):
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        if messagebox.askyesno("確認", f"{row['name']} を削除しますか？", parent=self):
             db.soft_delete_payroll_item(self.conn, row["id"])
-            self.refresh()
+            self.refresh(select_id=row["id"])
+
+    def toggle_active_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showinfo("確認", "行を選択してください。", parent=self)
+            return
+        db.set_payroll_item_active(self.conn, row["id"], 0 if row["is_active"] else 1)
+        self.refresh(select_id=row["id"])
 
     def move_selected(self, direction):
         row = self._selected_row()
@@ -988,12 +1030,13 @@ class EmployeeStandardValueFrame(ttk.Frame):
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="削除", command=self.delete_selected).pack(side="left", padx=5)
+        ttk.Button(btns, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
         self.tree.bind("<Double-1>", lambda _event: self.edit_selected())
         self.refresh()
         enable_enter_key_navigation(self)
 
-    def refresh(self):
+    def refresh(self, select_id=None):
         for item in self.tree.get_children():
             self.tree.delete(item)
         for employee in db.list_employees(self.conn):
@@ -1001,6 +1044,7 @@ class EmployeeStandardValueFrame(ttk.Frame):
                 self.tree.insert(
                     "",
                     "end",
+                    iid=str(r["id"]),
                     values=(
                         r["id"],
                         employee["employee_id"],
@@ -1014,6 +1058,9 @@ class EmployeeStandardValueFrame(ttk.Frame):
                     ),
                 )
         refresh_grid_treeview(self.tree)
+        if select_id is not None and self.tree.exists(str(select_id)):
+            self.tree.selection_set(str(select_id))
+            self.tree.see(str(select_id))
 
     def add(self):
         dlg = EmployeeStandardValueDialog(self, self.conn, on_saved=self.refresh)
@@ -1053,3 +1100,11 @@ class EmployeeStandardValueFrame(ttk.Frame):
             return
         db.delete_employee_payroll_item_standard_value(row["id"])
         self.refresh()
+
+    def toggle_active_selected(self):
+        row = self._selected_row()
+        if not row:
+            messagebox.showwarning("確認", "切り替える行を選択してください。", parent=self)
+            return
+        db.set_employee_payroll_item_standard_value_active(self.conn, row["id"], 0 if row["is_active"] else 1)
+        self.refresh(select_id=row["id"])

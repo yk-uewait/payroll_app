@@ -154,8 +154,8 @@ class PaymentScheduleFrame(ttk.Frame):
 
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("id", "name", "closing_mode", "pay_day", "memo"),
-            displaycolumns=("name", "closing_mode", "pay_day", "memo"),
+            columns=("id", "name", "closing_mode", "pay_day", "active", "memo"),
+            displaycolumns=("name", "closing_mode", "pay_day", "active", "memo"),
             show="headings",
             height=8,
             yscrollcommand=yscroll.set,
@@ -166,13 +166,15 @@ class PaymentScheduleFrame(ttk.Frame):
         self.tree.heading("name", text="名称")
         self.tree.heading("closing_mode", text="支給月")
         self.tree.heading("pay_day", text="支給日")
+        self.tree.heading("active", text="有効")
         self.tree.heading("memo", text="メモ")
 
         self.tree.column("id", width=60, anchor="center", stretch=False)
         self.tree.column("name", width=130, anchor="center", stretch=True)
         self.tree.column("closing_mode", width=70, anchor="center", stretch=False)
         self.tree.column("pay_day", width=70, anchor="center", stretch=False)
-        self.tree.column("memo", width=220, anchor="w", stretch=True)
+        self.tree.column("active", width=50, anchor="center", stretch=False)
+        self.tree.column("memo", width=170, anchor="w", stretch=True)
         apply_grid_treeview_style(self.tree)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -185,32 +187,39 @@ class PaymentScheduleFrame(ttk.Frame):
 
         bottom = ttk.Frame(self)
         bottom.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(bottom, text="追加", command=self.add_schedule).pack(side="left", padx=5)
+        ttk.Button(bottom, text="新規作成", command=self.add_schedule).pack(side="left", padx=5)
+        ttk.Button(bottom, text="編集", command=self.edit_selected).pack(side="left", padx=5)
         ttk.Button(bottom, text="削除", command=self.delete_selected).pack(side="left", padx=5)
+        ttk.Button(bottom, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
         ttk.Button(bottom, text="閉じる", command=self.close_window).pack(side="right", padx=5)
 
         self.refresh()
         enable_enter_key_navigation(self)
 
-    def refresh(self):
+    def refresh(self, select_id=None):
         import db
 
         for i in self.tree.get_children():
             self.tree.delete(i)
 
-        for r in db.list_payment_schedules_all(self.conn):
+        for r in db.list_payment_schedules_all(self.conn, include_inactive=True):
             self.tree.insert(
                 "",
                 "end",
+                iid=str(r["payment_schedule_id"]),
                 values=(
                     r["payment_schedule_id"],
                     r["schedule_name"],
                     closing_mode_label(r["closing_mode"]),
                     f'{int(r["pay_day"] or 0)} 日',
+                    "○" if r["is_active"] else "",
                     (r["memo"] if "memo" in r.keys() else "") or "",
                 ),
             )
         refresh_grid_treeview(self.tree)
+        if select_id is not None and self.tree.exists(str(select_id)):
+            self.tree.selection_set(str(select_id))
+            self.tree.see(str(select_id))
 
     def _selected_id(self):
         sel = self.tree.selection()
@@ -270,6 +279,21 @@ class PaymentScheduleFrame(ttk.Frame):
             return
 
         self.refresh()
+
+    def toggle_active_selected(self):
+        payment_schedule_id = self._selected_id()
+        if payment_schedule_id is None:
+            messagebox.showwarning("確認", "給与支給方式を選択してください。")
+            return
+
+        import db
+
+        row = db.get_payment_schedule_by_id(self.conn, payment_schedule_id)
+        if not row:
+            messagebox.showerror("エラー", "対象データが見つかりません。")
+            return
+        db.set_payment_schedule_active(self.conn, payment_schedule_id, 0 if row["is_active"] else 1)
+        self.refresh(select_id=payment_schedule_id)
 
     def on_double_click(self, event):
         self.edit_selected()
