@@ -4,12 +4,35 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
 from datetime import date
+import calendar
 
 import db
 from utils_dates import parse_month
 from bonus_batch_dialog import BonusBatchDialog
-from ui_create_dialogs import CreateMethodDialog, YearMonthDialog
+from ui_create_dialogs import CreateMethodDialog, YearMonthPayDateDialog
 from ui_window_utils import show_centered_window, enable_enter_key_navigation, apply_grid_treeview_style, refresh_grid_treeview
+
+def _format_year_month(value: str) -> str:
+    try:
+        year, month = str(value).split("-", 1)
+        return f"{int(year):04d} 年 {int(month):02d} 月"
+    except Exception:
+        return str(value or "")
+
+def _format_year_month_day(value: str) -> str:
+    try:
+        year, month, day = str(value).split("-", 2)
+        return f"{int(year):04d} 年 {int(month):02d} 月 {int(day):02d} 日"
+    except Exception:
+        return str(value or "")
+
+def _default_bonus_pay_date(target_month: str) -> str:
+    try:
+        year, month = [int(x) for x in str(target_month).split("-", 1)]
+        day = calendar.monthrange(year, month)[1]
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    except Exception:
+        return date.today().isoformat()
 
 class BonusEditorDialog(tk.Toplevel):
     """賞与支給控除金額の追加/編集"""
@@ -58,6 +81,7 @@ class BonusEditorDialog(tk.Toplevel):
         frm.pack(fill="both", expand=True, padx=12, pady=12)
 
         self.var_pay_date = tk.StringVar(value="")
+        self.var_pay_date_label = tk.StringVar(value="")
         self.var_emp = tk.StringVar()
         self.var_amount = tk.StringVar(value="0")
         self.var_note = tk.StringVar(value="")
@@ -86,10 +110,10 @@ class BonusEditorDialog(tk.Toplevel):
         frame.pack(fill="x", pady=(0, 8))
 
         ttk.Label(frame, text="対象年月").grid(row=0, column=0, padx=6, pady=4, sticky="w")
-        ttk.Label(frame, text=self.target_month).grid(row=0, column=1, padx=6, pady=4, sticky="w")
+        ttk.Label(frame, text=_format_year_month(self.target_month)).grid(row=0, column=1, padx=6, pady=4, sticky="w")
 
         ttk.Label(frame, text="支給日").grid(row=0, column=2, padx=6, pady=4, sticky="w")
-        ttk.Entry(frame, textvariable=self.var_pay_date, width=16).grid(row=0, column=3, padx=6, pady=4, sticky="w")
+        ttk.Label(frame, textvariable=self.var_pay_date_label, width=18).grid(row=0, column=3, padx=6, pady=4, sticky="w")
 
         ttk.Label(frame, text="社員").grid(row=1, column=0, padx=6, pady=4, sticky="w")
         self.cmb_emp = ttk.Combobox(frame, textvariable=self.var_emp, values=self.emp_keys, state="readonly", width=32)
@@ -148,12 +172,14 @@ class BonusEditorDialog(tk.Toplevel):
             self.var_emp.set(label)
             self.cmb_emp.config(state="disabled")
             self.var_pay_date.set(self.bonus_row["pay_date"] or "")
+            self.var_pay_date_label.set(_format_year_month_day(self.var_pay_date.get()))
             self.var_amount.set(self._format_amount(self.bonus_row["bonus_amount"] or 0))
             self.var_note.set(self.bonus_row["note"] or "")
         else:
             if self.emp_keys:
                 self.var_emp.set(self.emp_keys[0])
-            self.var_pay_date.set(self.initial_pay_date or f"{self.target_month}-01")
+            self.var_pay_date.set(self.initial_pay_date or _default_bonus_pay_date(self.target_month))
+            self.var_pay_date_label.set(_format_year_month_day(self.var_pay_date.get()))
 
         row = self.bonus_row
         for code, _title, auto_key, override_key, applied_key in self.DEDUCTION_FIELDS:
@@ -510,7 +536,7 @@ class BonusFrame(ttk.Frame):
 
     def _ask_bonus_month(self, title: str, source_options=None):
         initial_year = int(self.var_year.get()) if (self.var_year.get() or "").isdigit() else date.today().year
-        dlg = YearMonthDialog(
+        dlg = YearMonthPayDateDialog(
             self,
             title,
             source_options=source_options,
@@ -534,10 +560,9 @@ class BonusFrame(ttk.Frame):
         result = self._ask_bonus_month("賞与データの新規作成")
         if not result:
             return
-        target_month, _source = result
+        target_month, pay_date, _source = result
         if not self._ensure_bonus_month_not_exists(target_month):
             return
-        pay_date = f"{target_month}-01"
         dlg = BonusBatchDialog(self, self.conn, target_month, pay_date)
         self.wait_window(dlg)
         self._load_years()
@@ -553,10 +578,9 @@ class BonusFrame(ttk.Frame):
         result = self._ask_bonus_month("賞与データを既存明細から複写", source_options=source_options)
         if not result:
             return
-        target_month, source_month = result
+        target_month, pay_date, source_month = result
         if not self._ensure_bonus_month_not_exists(target_month):
             return
-        pay_date = f"{target_month}-01"
         copied = db.copy_prev_bonus_inputs(self.conn, target_month, pay_date, source_month)
         if copied <= 0:
             messagebox.showinfo("確認", "選択した複写元の賞与データがありません。", parent=self)

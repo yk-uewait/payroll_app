@@ -37,6 +37,9 @@ class CompanySettingsDialog(tk.Toplevel):
         self.var_postal = tk.StringVar()
         self.var_address = tk.StringVar()
         self.var_phone = tk.StringVar()
+        self.var_time_mode = tk.StringVar(value="60進法")
+        self.var_round_unit = tk.StringVar(value="1分")
+        self.var_round_method = tk.StringVar(value="なし")
 
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill="both", expand=True)
@@ -53,11 +56,20 @@ class CompanySettingsDialog(tk.Toplevel):
             ttk.Entry(frm, textvariable=var, width=width).grid(row=row, column=1, padx=5, pady=5, sticky="w")
 
         ttk.Label(frm, text="メモ").grid(row=5, column=0, padx=5, pady=5, sticky="nw")
+        ttk.Label(frm, text="時間入力方式").grid(row=6, column=0, padx=5, pady=5, sticky="w")
+        ttk.Combobox(frm, textvariable=self.var_time_mode, values=("60進法", "10進法"), state="readonly", width=14).grid(row=6, column=1, padx=5, pady=5, sticky="w")
+
+        ttk.Label(frm, text="時間丸め単位").grid(row=7, column=0, padx=5, pady=5, sticky="w")
+        ttk.Combobox(frm, textvariable=self.var_round_unit, values=("1分", "5分", "10分", "15分", "30分"), state="readonly", width=14).grid(row=7, column=1, padx=5, pady=5, sticky="w")
+
+        ttk.Label(frm, text="時間丸め方法").grid(row=8, column=0, padx=5, pady=5, sticky="w")
+        ttk.Combobox(frm, textvariable=self.var_round_method, values=("なし", "切り捨て", "切り上げ", "四捨五入"), state="readonly", width=14).grid(row=8, column=1, padx=5, pady=5, sticky="w")
+
         self.txt_memo = tk.Text(frm, width=48, height=4, wrap="word")
         self.txt_memo.grid(row=5, column=1, padx=5, pady=5, sticky="w")
 
         btns = ttk.Frame(frm)
-        btns.grid(row=6, column=0, columnspan=2, padx=5, pady=(10, 0), sticky="e")
+        btns.grid(row=9, column=0, columnspan=2, padx=5, pady=(10, 0), sticky="e")
         ttk.Button(btns, text="保存", command=self.save).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="閉じる", command=self.close).pack(side="left")
 
@@ -75,6 +87,9 @@ class CompanySettingsDialog(tk.Toplevel):
         self.var_postal.set(row["postal_code"] or "")
         self.var_address.set(row["address"] or "")
         self.var_phone.set(row["phone"] or "")
+        self.var_time_mode.set(db.row_get(row, "attendance_time_input_mode", "60進法") or "60進法")
+        self.var_round_unit.set(db.row_get(row, "attendance_time_round_unit", "1分") or "1分")
+        self.var_round_method.set(db.row_get(row, "attendance_time_round_method", "なし") or "なし")
         self.txt_memo.delete("1.0", "end")
         self.txt_memo.insert("1.0", row["memo"] or "")
 
@@ -87,6 +102,9 @@ class CompanySettingsDialog(tk.Toplevel):
             self.var_address.get().strip(),
             self.var_phone.get().strip(),
             self.txt_memo.get("1.0", "end-1c").strip() or None,
+            self.var_time_mode.get(),
+            self.var_round_unit.get(),
+            self.var_round_method.get(),
         )
         self.close()
 

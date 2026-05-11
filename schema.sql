@@ -319,6 +319,9 @@ CREATE TABLE IF NOT EXISTS company_settings (
   postal_code   TEXT NOT NULL DEFAULT '',
   address       TEXT NOT NULL DEFAULT '',
   phone         TEXT NOT NULL DEFAULT '',
+  attendance_time_input_mode TEXT NOT NULL DEFAULT '60進法',
+  attendance_time_round_unit TEXT NOT NULL DEFAULT '1分',
+  attendance_time_round_method TEXT NOT NULL DEFAULT 'なし',
   memo          TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -441,4 +444,36 @@ CREATE TABLE IF NOT EXISTS payroll_monthly_item_values (
   FOREIGN KEY(monthly_id) REFERENCES payroll_monthly(payroll_id),
   FOREIGN KEY(employee_id) REFERENCES employees(employee_id),
   FOREIGN KEY(item_id) REFERENCES payroll_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS payroll_monthly_attendance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  payroll_id INTEGER NOT NULL UNIQUE,
+  employee_id INTEGER NOT NULL,
+  target_month TEXT NOT NULL,
+  pay_date TEXT NOT NULL,
+  scheduled_work_days REAL NOT NULL DEFAULT 0,
+  work_days REAL NOT NULL DEFAULT 0,
+  weekday_work_days REAL NOT NULL DEFAULT 0,
+  holiday_work_days REAL NOT NULL DEFAULT 0,
+  paid_leave_days REAL NOT NULL DEFAULT 0,
+  special_leave_days REAL NOT NULL DEFAULT 0,
+  absence_days REAL NOT NULL DEFAULT 0,
+  substitute_leave_taken_days REAL NOT NULL DEFAULT 0,
+  substitute_leave_remaining_days REAL NOT NULL DEFAULT 0,
+  late_count INTEGER NOT NULL DEFAULT 0,
+  early_leave_count INTEGER NOT NULL DEFAULT 0,
+  scheduled_work_minutes INTEGER NOT NULL DEFAULT 0,
+  work_minutes INTEGER NOT NULL DEFAULT 0,
+  non_scheduled_work_minutes INTEGER NOT NULL DEFAULT 0,
+  overtime_minutes INTEGER NOT NULL DEFAULT 0,
+  holiday_work_minutes INTEGER NOT NULL DEFAULT 0,
+  night_work_minutes INTEGER NOT NULL DEFAULT 0,
+  holiday_night_work_minutes INTEGER NOT NULL DEFAULT 0,
+  late_early_leave_minutes INTEGER NOT NULL DEFAULT 0,
+  total_overtime_minutes INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(payroll_id) REFERENCES payroll_monthly(payroll_id),
+  FOREIGN KEY(employee_id) REFERENCES employees(employee_id)
 );

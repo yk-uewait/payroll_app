@@ -3,7 +3,7 @@
   "withholding_monthly_excel": "resources\\withholding_monthly.xlsx",
   "withholding_bonus_excel": "resources\\withholding_bonus.xlsx",
   "withholding_year_default": 2026,
-  "last_db_path": "C:\\payroll_app\\Data\\給与データ.db",
-  "last_db_dir": "C:\\payroll_app\\Data",
+  "last_db_path": "C:\\work\\payroll_app\\Data\\payroll.db",
+  "last_db_dir": "C:\\work\\payroll_app\\Data",
   "window_size": "small"
 }

@@ -1,4 +1,5 @@
 import tkinter as tk
+import re
 from tkinter import ttk, messagebox
 
 import app_settings
@@ -160,6 +161,7 @@ class PayrollEditorDialog(tk.Toplevel):
         self.payroll_id = payroll_id
         self.dynamic_item_vars = {}
         self.dynamic_item_sources = {}
+        self.attendance_vars = {}
         self.money_entries = []
         self.scroll_canvases = []
 
@@ -191,6 +193,7 @@ class PayrollEditorDialog(tk.Toplevel):
         import db
 
         self.row = db.get_payroll_by_id(self.conn, self.payroll_id)
+        self.attendance_time_mode = db.get_attendance_time_input_mode(self.conn)
 
     def _row_value(self, key: str, default=0):
         return self.row[key] if key in self.row.keys() and self.row[key] is not None else default
@@ -209,34 +212,44 @@ class PayrollEditorDialog(tk.Toplevel):
         ]
         for idx, (label, value) in enumerate(values):
             ttk.Label(header, text=f"{label}: {value or ''}").grid(
-                row=idx // 3,
-                column=idx % 3,
-                padx=8,
+                row=0,
+                column=idx,
+                padx=6,
                 pady=4,
                 sticky="w",
             )
+            header.grid_columnconfigure(idx, weight=1)
 
     def _build_body(self):
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=10, pady=(0, 8))
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure(2, weight=0)
         body.grid_rowconfigure(0, weight=1)
 
         pay_area = ttk.LabelFrame(body, text="支給")
-        pay_area.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        pay_area.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         deduct_area = ttk.LabelFrame(body, text="控除")
-        deduct_area.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        deduct_area.grid(row=0, column=1, sticky="nsew", padx=5)
+        attendance_area = ttk.LabelFrame(body, text="勤怠")
+        attendance_area.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
 
         self.pay_inner = self._create_scrollable_area(pay_area)
+        pay_canvas = self.scroll_canvases[-1]
         self.deduct_inner = self._create_scrollable_area(deduct_area)
+        deduct_canvas = self.scroll_canvases[-1]
+        self.attendance_inner = self._create_scrollable_area(attendance_area, width=240)
+        attendance_canvas = self.scroll_canvases[-1]
 
         self._build_dynamic_items(self.pay_inner, "pay")
         self._build_system_deductions(self.deduct_inner)
         ttk.Separator(self.deduct_inner).grid(row=20, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
         self._build_dynamic_items(self.deduct_inner, "deduction", start_row=21)
-        self._bind_scroll_recursive(self.pay_inner, self.scroll_canvases[0])
-        self._bind_scroll_recursive(self.deduct_inner, self.scroll_canvases[1])
+        self._build_attendance_items(self.attendance_inner)
+        self._bind_scroll_recursive(self.pay_inner, pay_canvas)
+        self._bind_scroll_recursive(self.deduct_inner, deduct_canvas)
+        self._bind_scroll_recursive(self.attendance_inner, attendance_canvas)
 
         pay_total_frame = ttk.Frame(pay_area)
         pay_total_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 8))
@@ -248,8 +261,8 @@ class PayrollEditorDialog(tk.Toplevel):
         self.lbl_total_deduct = ttk.Label(deduct_total_frame, text="控除合計: 0 円", font=("", 10, "bold"))
         self.lbl_total_deduct.pack(side="right")
 
-    def _create_scrollable_area(self, parent):
-        canvas = tk.Canvas(parent, highlightthickness=0)
+    def _create_scrollable_area(self, parent, width=None):
+        canvas = tk.Canvas(parent, highlightthickness=0, width=width)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas)
         window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
@@ -327,12 +340,15 @@ class PayrollEditorDialog(tk.Toplevel):
 
         if not items:
             item_label = "支給項目" if item_kind == "pay" else "控除項目"
+            message = f"{item_label}を追加したい場合は、「支給控除マスタ（中分類）」より項目の登録を行ってください。"
+            if item_kind == "deduction":
+                message = "追加項目を追加したい場合は、\n「支給控除マスタ（中分類）」より\n項目の登録を行ってください。"
             ttk.Label(
                 parent,
-                text=f"{item_label}を追加したい場合は、「支給控除マスタ（中分類）」より項目の登録を行ってください。",
+                text=message,
                 wraplength=220,
                 justify="left",
-            ).grid(row=start_row, column=0, columnspan=3, padx=5, pady=5, sticky="w")
+            ).grid(row=start_row, column=0, columnspan=3, padx=(12, 5), pady=5, sticky="w")
             return
 
         for idx, item in enumerate(items, start=start_row):
@@ -349,11 +365,11 @@ class PayrollEditorDialog(tk.Toplevel):
                 if amount == 0 and item["code"] in {"officer_pay", "base_salary", "overtime_pay", "commute_nontax"}:
                     amount = int(self._row_value(item["code"], 0) or 0)
 
-            ttk.Label(parent, text=item["name"]).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+            ttk.Label(parent, text=item["name"]).grid(row=idx, column=0, padx=(12, 5), pady=4, sticky="w")
             var = tk.StringVar(value=_format_amount(amount))
             ent = ttk.Entry(parent, textvariable=var, width=16, justify="right")
-            ent.grid(row=idx, column=1, padx=5, pady=4, sticky="e")
-            ttk.Label(parent, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
+            ent.grid(row=idx, column=1, padx=(5, 4), pady=4, sticky="w")
+            ttk.Label(parent, text="円").grid(row=idx, column=2, padx=(0, 12), pady=4, sticky="w")
             if locked:
                 ent.configure(state="disabled")
             else:
@@ -380,14 +396,92 @@ class PayrollEditorDialog(tk.Toplevel):
         ]
         for idx, (label, key, command) in enumerate(rows, start=0):
             if command:
-                ttk.Button(parent, text=label, command=command, width=9).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+                ttk.Button(parent, text=label, command=command, width=9).grid(row=idx, column=0, padx=(12, 5), pady=4, sticky="w")
             else:
-                ttk.Label(parent, text=label).grid(row=idx, column=0, padx=5, pady=4, sticky="w")
+                ttk.Label(parent, text=label).grid(row=idx, column=0, padx=(12, 5), pady=4, sticky="w")
             var = tk.StringVar(value=_format_amount(self._system_amount(key)))
             self.system_amount_vars[key] = var
-            ttk.Label(parent, textvariable=var, anchor="e", width=16).grid(row=idx, column=1, padx=5, pady=4, sticky="e")
-            ttk.Label(parent, text="円").grid(row=idx, column=2, padx=5, pady=4, sticky="w")
-        parent.grid_columnconfigure(1, weight=1)
+            ttk.Label(parent, textvariable=var, anchor="e", width=16).grid(row=idx, column=1, padx=(5, 4), pady=4, sticky="w")
+            ttk.Label(parent, text="円").grid(row=idx, column=2, padx=(0, 12), pady=4, sticky="w")
+        parent.grid_columnconfigure(0, weight=0)
+        parent.grid_columnconfigure(1, weight=0)
+
+    def _format_attendance_day(self, value) -> str:
+        try:
+            number = float(value or 0)
+            return str(int(number)) if number.is_integer() else f"{number:g}"
+        except Exception:
+            return "0"
+
+    def _format_attendance_input(self, key: str, value) -> str:
+        import db
+
+        if key in {field for field, _label in db.ATTENDANCE_TIME_FIELDS}:
+            return db.format_attendance_minutes(value, self.attendance_time_mode)
+        if key in {field for field, _label in db.ATTENDANCE_DAY_FIELDS}:
+            return self._format_attendance_day(value)
+        return str(int(value or 0))
+
+    def _build_attendance_items(self, parent):
+        import db
+
+        self.attendance_vars = {}
+        saved = db.get_payroll_attendance(self.conn, self.payroll_id)
+        categories = [
+            ("日数", db.ATTENDANCE_DAY_FIELDS),
+            ("回数", db.ATTENDANCE_COUNT_FIELDS),
+            ("時間", db.ATTENDANCE_TIME_FIELDS),
+        ]
+        row = 0
+        ttk.Label(parent, text=f"時間入力方式: {self.attendance_time_mode}").grid(
+            row=row, column=0, columnspan=2, padx=5, pady=(4, 8), sticky="w"
+        )
+        row += 1
+        for title, fields in categories:
+            ttk.Label(parent, text=title, font=("", 10, "bold")).grid(
+                row=row, column=0, columnspan=2, padx=5, pady=(8, 3), sticky="w"
+            )
+            row += 1
+            for key, label in fields:
+                ttk.Label(parent, text=label).grid(row=row, column=0, padx=(12, 5), pady=3, sticky="w")
+                var = tk.StringVar(value=self._format_attendance_input(key, saved.get(key, 0)))
+                ent = ttk.Entry(parent, textvariable=var, width=12, justify="right")
+                ent.grid(row=row, column=1, padx=(5, 0), pady=3, sticky="w")
+                self.attendance_vars[key] = {"var": var, "label": label}
+                row += 1
+        parent.grid_columnconfigure(0, weight=0)
+        parent.grid_columnconfigure(1, weight=0)
+
+    def _parse_attendance_inputs(self) -> dict:
+        import db
+
+        data = {}
+        day_fields = dict(db.ATTENDANCE_DAY_FIELDS)
+        count_fields = dict(db.ATTENDANCE_COUNT_FIELDS)
+        time_fields = dict(db.ATTENDANCE_TIME_FIELDS)
+        for key, meta in self.attendance_vars.items():
+            label = meta["label"]
+            text = (meta["var"].get() or "").strip()
+            try:
+                if key in day_fields:
+                    if text == "":
+                        data[key] = 0
+                    elif not re.fullmatch(r"\d+(\.\d+)?", text):
+                        raise ValueError("日数は0以上の数値で入力してください。")
+                    else:
+                        data[key] = float(text)
+                elif key in count_fields:
+                    if text == "":
+                        data[key] = 0
+                    elif not re.fullmatch(r"\d+", text):
+                        raise ValueError("回数は0以上の整数で入力してください。")
+                    else:
+                        data[key] = int(text)
+                elif key in time_fields:
+                    data[key] = db.parse_attendance_time_to_minutes(text, self.attendance_time_mode)
+            except ValueError as e:
+                raise ValueError(f"{label}: {e}") from e
+        return data
 
     def _build_net_total(self):
         net_frame = ttk.Frame(self)
@@ -481,29 +575,41 @@ class PayrollEditorDialog(tk.Toplevel):
         self._reload_view()
 
     def _reload_view(self):
-        self.dynamic_item_vars = {}
-        self.dynamic_item_sources = {}
-        self.money_entries = []
-        self.scroll_canvases = []
-        self._load_row()
-        for child in self.winfo_children():
-            child.destroy()
-        self._build_header()
-        self._build_body()
-        self._build_net_total()
-        self._build_note()
-        self._build_footer()
-        self._update_totals()
-        self._saved_snapshot = self._current_snapshot()
-        enable_enter_key_navigation(self)
+        old_geometry = self.geometry()
+        self.withdraw()
+        try:
+            self.dynamic_item_vars = {}
+            self.dynamic_item_sources = {}
+            self.attendance_vars = {}
+            self.money_entries = []
+            self.scroll_canvases = []
+            self._load_row()
+            for child in self.winfo_children():
+                child.destroy()
+            self._build_header()
+            self._build_body()
+            self._build_net_total()
+            self._build_note()
+            self._build_footer()
+            self._update_totals()
+            self._saved_snapshot = self._current_snapshot()
+            enable_enter_key_navigation(self)
+            self.update_idletasks()
+            self.geometry(old_geometry)
+        finally:
+            self.deiconify()
 
     def _current_snapshot(self):
         dynamic = {}
         for item_id, var in self.dynamic_item_vars.items():
             if isinstance(item_id, int):
                 dynamic[item_id] = (var.get() or "").strip()
+        attendance = {
+            key: (meta["var"].get() or "").strip()
+            for key, meta in getattr(self, "attendance_vars", {}).items()
+        }
         note = self.txt_note.get("1.0", "end-1c") if hasattr(self, "txt_note") else ""
-        return dynamic, note
+        return dynamic, attendance, note
 
     def _has_unsaved_changes(self) -> bool:
         return getattr(self, "_saved_snapshot", None) != self._current_snapshot()
@@ -561,6 +667,7 @@ class PayrollEditorDialog(tk.Toplevel):
                 item = meta["item"]
                 amount = _to_int(self.dynamic_item_vars[item_id].get())
                 dynamic_data[item_id] = (item, amount, meta.get("source") or "manual")
+            attendance_data = self._parse_attendance_inputs()
         except ValueError as e:
             messagebox.showerror("入力エラー", str(e), parent=self)
             return
@@ -586,6 +693,19 @@ class PayrollEditorDialog(tk.Toplevel):
                 )
         except Exception as e:
             messagebox.showerror("保存エラー", f"支給控除明細の保存に失敗しました。\n{e}", parent=self)
+            return
+
+        try:
+            db.upsert_payroll_attendance(
+                self.conn,
+                self.payroll_id,
+                int(self.row["employee_id"]),
+                str(self.row["target_month"]),
+                str(self.row["pay_date_applied"]),
+                attendance_data,
+            )
+        except Exception as e:
+            messagebox.showerror("菫晏ｭ倥お繝ｩ繝ｼ", f"勤怠情報の保存に失敗しました。\n{e}", parent=self)
             return
 
         try:

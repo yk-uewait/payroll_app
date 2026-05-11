@@ -229,7 +229,6 @@ class BonusBatchDialog(tk.Toplevel):
                 borderwidth=1,
                 padx=6,
                 pady=6,
-                cursor="hand2",
                 bg="#d9edf7" if col_idx - 1 == self.selected_employee_index else "#f0f0f0",
             )
             lbl.grid(row=0, column=col_idx, sticky="nsew")

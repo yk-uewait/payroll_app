@@ -1,4 +1,5 @@
 import tkinter as tk
+import unicodedata
 from tkinter import ttk, messagebox, simpledialog
 
 import db
@@ -394,11 +395,34 @@ class PayrollBatchDialog(tk.Toplevel):
             self.employee_value_widgets.append(line_widgets)
             self.matrix_row_styles.append({"row_kind": row_kind, "emphasis": emphasis, "bg": value_bg})
 
+        def display_units(value):
+            units = 0
+            for char in str(value):
+                units += 2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1
+            return units
+
+        def employee_column_width(row):
+            candidates = [f'{row["employee_code"]}\n{row["name_kanji"]}']
+            for item_def in item_defs:
+                if item_def["row_kind"] == "separator" or item_def["is_money"]:
+                    continue
+                if item_def["source"] == "field" and item_def["key"] == "department":
+                    continue
+                value = self._matrix_value(row, item_def["source"], item_def["key"])
+                if value is not None:
+                    candidates.append(str(value))
+            max_chars = 0
+            for text in candidates:
+                for line in str(text).splitlines():
+                    max_chars = max(max_chars, display_units(line))
+            return max(110, min(300, max_chars * 6 + 14))
+
         self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=170)
         self.header_frame.grid_columnconfigure(0, weight=0, minsize=170)
-        for col_idx in range(1, len(self.rows_data) + 1):
-            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=130)
-            self.header_frame.grid_columnconfigure(col_idx, weight=0, minsize=130)
+        for col_idx, row in enumerate(self.rows_data, start=1):
+            width = employee_column_width(row)
+            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=width)
+            self.header_frame.grid_columnconfigure(col_idx, weight=0, minsize=width)
 
         self._apply_selection_highlight()
         self.header_frame.update_idletasks()

@@ -10,6 +10,48 @@ import app_settings
 
 DB_PATH = Path(__file__).resolve().parent / "payroll.db"
 
+ATTENDANCE_DAY_FIELDS = [
+    ("scheduled_work_days", "所定労働日数"),
+    ("work_days", "労働日数"),
+    ("weekday_work_days", "平日出勤日数"),
+    ("holiday_work_days", "休日出勤日数"),
+    ("paid_leave_days", "有給取得日数"),
+    ("special_leave_days", "特休取得日数"),
+    ("absence_days", "欠勤日数"),
+    ("substitute_leave_taken_days", "振休取得日数"),
+    ("substitute_leave_remaining_days", "振休残日数"),
+]
+ATTENDANCE_COUNT_FIELDS = [
+    ("late_count", "遅刻回数"),
+    ("early_leave_count", "早退回数"),
+]
+ATTENDANCE_TIME_FIELDS = [
+    ("scheduled_work_minutes", "所定労働時間"),
+    ("work_minutes", "労働時間数"),
+    ("non_scheduled_work_minutes", "所定外労働時間"),
+    ("overtime_minutes", "時間外労働時間"),
+    ("holiday_work_minutes", "休日労働時間"),
+    ("night_work_minutes", "深夜労働時間"),
+    ("holiday_night_work_minutes", "休日深夜労働時間"),
+    ("late_early_leave_minutes", "遅刻早退時間"),
+    ("total_overtime_minutes", "総残業時間"),
+]
+ATTENDANCE_FIELDS = ATTENDANCE_DAY_FIELDS + ATTENDANCE_COUNT_FIELDS + ATTENDANCE_TIME_FIELDS
+WAGE_LEDGER_ATTENDANCE_FIELDS = [
+    ("scheduled_work_days", "所定労働日数"),
+    ("work_days", "労働日数"),
+    ("work_minutes", "労働時間数"),
+    ("overtime_minutes", "時間外労働時間"),
+    ("holiday_work_minutes", "休日労働時間"),
+    ("night_work_minutes", "深夜労働時間"),
+    ("paid_leave_days", "有給取得日数"),
+    ("absence_days", "欠勤日数"),
+    ("late_count", "遅刻回数"),
+    ("early_leave_count", "早退回数"),
+    ("late_early_leave_minutes", "遅刻早退時間"),
+    ("total_overtime_minutes", "総残業時間"),
+]
+
 EMPLOYEE_CSV_COLUMNS = [
     "社員番号",
     "氏名",
@@ -644,11 +686,31 @@ def get_company_settings(conn):
     cur.execute("SELECT * FROM company_settings WHERE id = 1")
     return cur.fetchone()
 
-def upsert_company_settings(conn, company_name, company_kana="", postal_code="", address="", phone="", memo=None):
+def upsert_company_settings(
+    conn,
+    company_name,
+    company_kana="",
+    postal_code="",
+    address="",
+    phone="",
+    memo=None,
+    attendance_time_input_mode="60進法",
+    attendance_time_round_unit="1分",
+    attendance_time_round_method="なし",
+):
+    if attendance_time_input_mode not in {"60進法", "10進法"}:
+        attendance_time_input_mode = "60進法"
+    if attendance_time_round_unit not in {"1分", "5分", "10分", "15分", "30分"}:
+        attendance_time_round_unit = "1分"
+    if attendance_time_round_method not in {"なし", "切り捨て", "切り上げ", "四捨五入"}:
+        attendance_time_round_method = "なし"
     conn.execute(
         """
-        INSERT INTO company_settings(id, company_name, company_kana, postal_code, address, phone, memo)
-        VALUES (1, ?, ?, ?, ?, ?, ?)
+        INSERT INTO company_settings(
+          id, company_name, company_kana, postal_code, address, phone, memo,
+          attendance_time_input_mode, attendance_time_round_unit, attendance_time_round_method
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           company_name=excluded.company_name,
           company_kana=excluded.company_kana,
@@ -656,11 +718,108 @@ def upsert_company_settings(conn, company_name, company_kana="", postal_code="",
           address=excluded.address,
           phone=excluded.phone,
           memo=excluded.memo,
+          attendance_time_input_mode=excluded.attendance_time_input_mode,
+          attendance_time_round_unit=excluded.attendance_time_round_unit,
+          attendance_time_round_method=excluded.attendance_time_round_method,
           updated_at=datetime('now')
         """,
-        (company_name, company_kana, postal_code, address, phone, memo),
+        (
+            company_name,
+            company_kana,
+            postal_code,
+            address,
+            phone,
+            memo,
+            attendance_time_input_mode,
+            attendance_time_round_unit,
+            attendance_time_round_method,
+        ),
     )
     conn.commit()
+
+def get_attendance_time_input_mode(conn) -> str:
+    row = get_company_settings(conn)
+    mode = row_get(row, "attendance_time_input_mode", "60進法") if row else "60進法"
+    return mode if mode in {"60進法", "10進法"} else "60進法"
+
+def parse_attendance_time_to_minutes(value: str, mode: str) -> int:
+    text = (value or "").strip()
+    if text == "":
+        return 0
+    if text.startswith("-"):
+        raise ValueError("時間はマイナス入力できません。")
+    if mode == "10進法":
+        if not re.fullmatch(r"\d+(\.\d{1,2})?", text):
+            raise ValueError("10進法の時間は 1.50 のように小数第2位までで入力してください。")
+        return int(round(float(text) * 60))
+    if not re.fullmatch(r"\d+:\d{1,2}", text):
+        raise ValueError("60進法の時間は 1:30 のように入力してください。")
+    hours_text, minutes_text = text.split(":", 1)
+    minutes = int(minutes_text)
+    if minutes >= 60:
+        raise ValueError("60進法の分は0から59で入力してください。")
+    return int(hours_text) * 60 + minutes
+
+def format_attendance_minutes(minutes, mode: str) -> str:
+    minutes = int(minutes or 0)
+    if mode == "10進法":
+        return f"{minutes / 60:.2f}"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}:{mins:02d}"
+
+def _attendance_defaults() -> dict:
+    data = {key: 0 for key, _label in ATTENDANCE_FIELDS}
+    return data
+
+def get_payroll_attendance(conn, payroll_id: int) -> dict:
+    row = conn.execute(
+        "SELECT * FROM payroll_monthly_attendance WHERE payroll_id=?",
+        (payroll_id,),
+    ).fetchone()
+    data = _attendance_defaults()
+    if row:
+        for key, _label in ATTENDANCE_FIELDS:
+            data[key] = row_get(row, key, 0) or 0
+        data["id"] = row["id"]
+        data["payroll_id"] = row["payroll_id"]
+    return data
+
+def upsert_payroll_attendance(
+    conn,
+    payroll_id: int,
+    employee_id: int,
+    target_month: str,
+    pay_date: str,
+    values: dict,
+):
+    data = _attendance_defaults()
+    for key in data:
+        data[key] = values.get(key, 0) or 0
+    columns = [key for key, _label in ATTENDANCE_FIELDS]
+    insert_cols = ["payroll_id", "employee_id", "target_month", "pay_date", *columns]
+    placeholders = ", ".join(["?"] * len(insert_cols))
+    update_set = ", ".join([f"{col}=excluded.{col}" for col in ["employee_id", "target_month", "pay_date", *columns]])
+    sql = f"""
+        INSERT INTO payroll_monthly_attendance({", ".join(insert_cols)})
+        VALUES ({placeholders})
+        ON CONFLICT(payroll_id) DO UPDATE SET
+          {update_set},
+          updated_at=datetime('now')
+    """
+    params = [payroll_id, employee_id, target_month, pay_date] + [data[col] for col in columns]
+    conn.execute(sql, params)
+    conn.commit()
+
+def format_attendance_value_for_output(conn, key: str, value) -> str:
+    if key in {field for field, _label in ATTENDANCE_TIME_FIELDS}:
+        return format_attendance_minutes(value, get_attendance_time_input_mode(conn))
+    if key in {field for field, _label in ATTENDANCE_DAY_FIELDS}:
+        try:
+            number = float(value or 0)
+            return str(int(number)) if number.is_integer() else f"{number:g}"
+        except Exception:
+            return "0"
+    return str(int(value or 0))
 
 def list_named_master(conn, table: str, include_inactive: bool = False):
     if table not in {"departments", "positions", "employment_types"}:
@@ -2224,6 +2383,7 @@ def delete_payroll_batch(conn, target_month: str, pay_date_applied: str) -> int:
     placeholders = ",".join("?" for _ in payroll_ids)
     conn.execute(f"DELETE FROM payroll_monthly_item_values WHERE monthly_id IN ({placeholders})", payroll_ids)
     conn.execute(f"DELETE FROM payroll_monthly_social_detail WHERE payroll_id IN ({placeholders})", payroll_ids)
+    conn.execute(f"DELETE FROM payroll_monthly_attendance WHERE payroll_id IN ({placeholders})", payroll_ids)
     cur = conn.execute(f"DELETE FROM payroll_monthly WHERE payroll_id IN ({placeholders})", payroll_ids)
     conn.commit()
     return cur.rowcount
@@ -2450,6 +2610,16 @@ def ensure_schema_migrations(conn):
 
     _normalize_existing_employee_codes(conn)
 
+    if _table_exists(conn, "company_settings"):
+        company_columns = {
+            "attendance_time_input_mode": "TEXT NOT NULL DEFAULT '60進法'",
+            "attendance_time_round_unit": "TEXT NOT NULL DEFAULT '1分'",
+            "attendance_time_round_method": "TEXT NOT NULL DEFAULT 'なし'",
+        }
+        for col, ddl in company_columns.items():
+            if not _column_exists(conn, "company_settings", col):
+                conn.execute(f"ALTER TABLE company_settings ADD COLUMN {col} {ddl}")
+
     if _table_exists(conn, "departments"):
         if not _column_exists(conn, "departments", "parent_department_id"):
             conn.execute("ALTER TABLE departments ADD COLUMN parent_department_id INTEGER")
@@ -2473,6 +2643,42 @@ def ensure_schema_migrations(conn):
     )
     if not _column_exists(conn, "payment_schedules", "memo"):
         conn.execute("ALTER TABLE payment_schedules ADD COLUMN memo TEXT")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS payroll_monthly_attendance (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          payroll_id INTEGER NOT NULL UNIQUE,
+          employee_id INTEGER NOT NULL,
+          target_month TEXT NOT NULL,
+          pay_date TEXT NOT NULL,
+          scheduled_work_days REAL NOT NULL DEFAULT 0,
+          work_days REAL NOT NULL DEFAULT 0,
+          weekday_work_days REAL NOT NULL DEFAULT 0,
+          holiday_work_days REAL NOT NULL DEFAULT 0,
+          paid_leave_days REAL NOT NULL DEFAULT 0,
+          special_leave_days REAL NOT NULL DEFAULT 0,
+          absence_days REAL NOT NULL DEFAULT 0,
+          substitute_leave_taken_days REAL NOT NULL DEFAULT 0,
+          substitute_leave_remaining_days REAL NOT NULL DEFAULT 0,
+          late_count INTEGER NOT NULL DEFAULT 0,
+          early_leave_count INTEGER NOT NULL DEFAULT 0,
+          scheduled_work_minutes INTEGER NOT NULL DEFAULT 0,
+          work_minutes INTEGER NOT NULL DEFAULT 0,
+          non_scheduled_work_minutes INTEGER NOT NULL DEFAULT 0,
+          overtime_minutes INTEGER NOT NULL DEFAULT 0,
+          holiday_work_minutes INTEGER NOT NULL DEFAULT 0,
+          night_work_minutes INTEGER NOT NULL DEFAULT 0,
+          holiday_night_work_minutes INTEGER NOT NULL DEFAULT 0,
+          late_early_leave_minutes INTEGER NOT NULL DEFAULT 0,
+          total_overtime_minutes INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(payroll_id) REFERENCES payroll_monthly(payroll_id),
+          FOREIGN KEY(employee_id) REFERENCES employees(employee_id)
+        )
+        """
+    )
 
     # -------------------------------------------------
     # payroll_monthly
@@ -2709,6 +2915,9 @@ def ensure_schema_migrations(conn):
           postal_code   TEXT NOT NULL DEFAULT '',
           address       TEXT NOT NULL DEFAULT '',
           phone         TEXT NOT NULL DEFAULT '',
+          attendance_time_input_mode TEXT NOT NULL DEFAULT '60進法',
+          attendance_time_round_unit TEXT NOT NULL DEFAULT '1分',
+          attendance_time_round_method TEXT NOT NULL DEFAULT 'なし',
           memo          TEXT,
           created_at    TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -4359,6 +4568,9 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
         "備考",
     ]
 
+    attendance_headers = [label for _key, label in WAGE_LEDGER_ATTENDANCE_FIELDS]
+    headers = headers[:5] + attendance_headers + headers[5:]
+
     ws.append(headers)
 
     header_font = Font(bold=True)
@@ -4383,6 +4595,11 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
 
         deduct_total = health_care + childcare + pension + emp_ins + withholding_tax + resident_tax
         net = gross - deduct_total
+        attendance = get_payroll_attendance(conn, int(row_get(r, "payroll_id", 0) or 0))
+        attendance_values = [
+            format_attendance_value_for_output(conn, key, attendance.get(key, 0))
+            for key, _label in WAGE_LEDGER_ATTENDANCE_FIELDS
+        ]
 
         data = [
             row_get(r, "target_month", ""),
@@ -4407,6 +4624,7 @@ def export_wage_ledger_excel(conn, target_month: str, file_path: str) -> None:
             net,
             row_get(r, "note", ""),
         ]
+        data = data[:5] + attendance_values + data[5:]
         ws.append(data)
 
     money_headers = {
@@ -4524,6 +4742,10 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis:
         "自由支給合計", "総支給", "健康・介護", "子ども・子育て", "厚生年金", "雇用保険",
         "源泉所得税", "住民税", "その他控除", "控除合計", "差引支給額",
     ]
+    attendance_fields = WAGE_LEDGER_ATTENDANCE_FIELDS
+    attendance_headers = [label for _key, label in attendance_fields]
+    headers = headers[:1] + attendance_headers + headers[1:]
+    attendance_len = len(attendance_fields)
     fixed_codes = {"base_salary", "officer_pay", "special_allow", "deemed_ot", "overtime_pay", "commute_nontax"}
 
     def pay_amount(data, code):
@@ -4537,7 +4759,9 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis:
             return [0] * (len(headers) - 1)
         data = build_payroll_output_data(conn, r)
         free_pay_total = sum(int(item.get("amount") or 0) for item in data["pay_items"] if item.get("code") not in fixed_codes)
-        return [
+        attendance = get_payroll_attendance(conn, int(row_get(r, "payroll_id", 0) or 0))
+        attendance_values = [attendance.get(key, 0) or 0 for key, _label in attendance_fields]
+        return attendance_values + [
             pay_amount(data, "base_salary"),
             pay_amount(data, "officer_pay"),
             pay_amount(data, "special_allow"),
@@ -4571,7 +4795,7 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis:
         withholding = int(row_get(r, "withholding_tax_applied", 0) or 0)
         deduct_total = health_care + childcare + pension + emp_ins + withholding
         net = bonus_amount - deduct_total
-        return [0, 0, 0, 0, 0, 0, 0, bonus_amount, health_care, childcare, pension, emp_ins, withholding, 0, 0, deduct_total, net]
+        return [0] * attendance_len + [0, 0, 0, 0, 0, 0, 0, bonus_amount, health_care, childcare, pension, emp_ins, withholding, 0, 0, deduct_total, net]
 
     def sum_rows(rows):
         if not rows:
@@ -4586,9 +4810,14 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis:
         if fill:
             cell.fill = fill
         for ci, val in enumerate(values, start=2):
-            cell = ws.cell(row=row_idx, column=ci, value=val)
-            cell.number_format = "#,##0"
-            cell.alignment = align_r
+            if ci <= 1 + attendance_len:
+                key = attendance_fields[ci - 2][0]
+                cell = ws.cell(row=row_idx, column=ci, value=format_attendance_value_for_output(conn, key, val))
+                cell.alignment = align_r
+            else:
+                cell = ws.cell(row=row_idx, column=ci, value=val)
+                cell.number_format = "#,##0"
+                cell.alignment = align_r
             if bold:
                 cell.font = font_head
             if fill:
