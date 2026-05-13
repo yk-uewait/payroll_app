@@ -630,6 +630,14 @@ def upsert_employee(
     )
     conn.commit()
 
+def _row_with_current_department_name(conn, r) -> dict:
+    row = dict(r)
+    department_id = row.get("department_id")
+    if department_id:
+        row["department"] = get_department_full_name(conn, department_id) or row.get("department", "")
+    return row
+
+
 def list_employees(conn, include_deleted: bool = False):
     cur = conn.cursor()
     if include_deleted:
@@ -656,13 +664,7 @@ def list_employees(conn, include_deleted: bool = False):
             """
         )
     rows = cur.fetchall()
-    result = []
-    for r in rows:
-        row = dict(r)
-        if row.get("department_id"):
-            row["department"] = get_department_full_name(conn, row["department_id"]) or row.get("department", "")
-        result.append(row)
-    return result
+    return [_row_with_current_department_name(conn, r) for r in rows]
 
 def soft_delete_employee(conn, employee_id: int) -> bool:
     cur = conn.cursor()
@@ -1784,9 +1786,7 @@ def build_payroll_calculation_basis(conn, r) -> dict:
     }
 
 def _row_with_calculation_basis(conn, r) -> dict:
-    row = dict(r)
-    if row.get("department_id"):
-        row["department"] = get_department_full_name(conn, row["department_id"]) or row.get("department", "")
+    row = _row_with_current_department_name(conn, r)
     basis = build_payroll_calculation_basis(conn, r)
     row["use_dynamic_items"] = 1 if basis["use_dynamic_items"] else 0
     row["dynamic_social_insurance_base"] = basis["social_insurance_base"]
@@ -2477,6 +2477,7 @@ def get_payroll_by_id(conn, payroll_id: int):
                e.employee_code,
                e.name_kanji,
                e.department,
+               e.department_id,
                e.payday_group,
                COALESCE(pos.name, '') AS position_name,
                COALESCE(emp_type.name, '') AS employment_type_name
@@ -2488,7 +2489,8 @@ def get_payroll_by_id(conn, payroll_id: int):
         """,
         (payroll_id,),
     )
-    return cur.fetchone()
+    row = cur.fetchone()
+    return _row_with_current_department_name(conn, row) if row else None
 
 def _column_exists(conn, table: str, column: str) -> bool:
     cur = conn.cursor()
@@ -5041,7 +5043,7 @@ def list_bonus_rows(conn, target_month: str):
         """,
         (target_month,),
     )
-    return cur.fetchall()
+    return [_row_with_current_department_name(conn, r) for r in cur.fetchall()]
 
 
 def get_bonus_by_id(conn, bonus_id: int):
@@ -5057,7 +5059,8 @@ def get_bonus_by_id(conn, bonus_id: int):
         """,
         (bonus_id,),
     )
-    return cur.fetchone()
+    row = cur.fetchone()
+    return _row_with_current_department_name(conn, row) if row else None
 
 def upsert_bonus(conn, target_month: str, pay_date: str, employee_id: int, bonus_amount: int, note: str | None = None):
     cur = conn.cursor()
@@ -5088,7 +5091,8 @@ def get_bonus_by_employee_month(conn, target_month: str, employee_id: int):
         """,
         (target_month, employee_id),
     )
-    return cur.fetchone()
+    row = cur.fetchone()
+    return _row_with_current_department_name(conn, row) if row else None
 
 def update_bonus_overrides(conn, bonus_id: int, overrides: dict):
     allowed = {
@@ -5255,7 +5259,7 @@ def list_bonus_rows_by_pay_date(conn, target_month: str, pay_date: str):
         """,
         (target_month, pay_date),
     )
-    return cur.fetchall()
+    return [_row_with_current_department_name(conn, r) for r in cur.fetchall()]
 
 def delete_bonus(conn, bonus_id: int):
     conn.execute("DELETE FROM payroll_bonus WHERE bonus_id=?", (bonus_id,))
