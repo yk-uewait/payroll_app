@@ -185,7 +185,7 @@ class App(tk.Tk):
             return
 
         try:
-            db.export_wage_ledger_excel(self.conn, target_month, path)
+            db.export_payroll_slips_excel(self.conn, target_month, path)
         except Exception as e:
             messagebox.showerror("エラー", f"出力に失敗しました。\n詳細: {e}", parent=self)
             return
