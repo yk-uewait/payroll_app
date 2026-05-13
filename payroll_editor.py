@@ -705,7 +705,7 @@ class PayrollEditorDialog(tk.Toplevel):
                 attendance_data,
             )
         except Exception as e:
-            messagebox.showerror("菫晏ｭ倥お繝ｩ繝ｼ", f"勤怠情報の保存に失敗しました。\n{e}", parent=self)
+            messagebox.showerror("保存エラー", f"勤怠情報の保存に失敗しました。\n{e}", parent=self)
             return
 
         try:

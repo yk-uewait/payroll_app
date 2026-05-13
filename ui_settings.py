@@ -134,7 +134,18 @@ class SettingsFrame(ttk.Frame):
         ttk.Label(row, text=description, wraplength=620, justify="left").pack(side="left", fill="x", expand=True, anchor="w")
 
     def _bind_mousewheel(self, canvas, root_widget):
+        def needs_scroll():
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return False
+            content_height = bbox[3] - bbox[1]
+            visible_height = canvas.winfo_height()
+            return content_height > visible_height + 1
+
         def on_mousewheel(event):
+            if not needs_scroll():
+                canvas.yview_moveto(0)
+                return "break"
             if event.num == 4:
                 canvas.yview_scroll(-1, "units")
             elif event.num == 5:

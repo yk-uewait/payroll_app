@@ -543,13 +543,18 @@ class PayrollBatchDialog(tk.Toplevel):
         month_info = parse_month(self.target_month)
         cur = self.conn.cursor()
         for employee, pay_date in missing:
+            department_id_snapshot, department_name_snapshot = db.get_employee_department_snapshot(
+                self.conn,
+                int(employee["employee_id"]),
+            )
             cur.execute(
                 """
                 INSERT OR IGNORE INTO payroll_monthly(
                   target_month, employee_id,
                   wage_period_start, wage_period_end,
-                  pay_date_auto, pay_date_applied
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                  pay_date_auto, pay_date_applied,
+                  department_id_snapshot, department_name_snapshot
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self.target_month,
@@ -558,6 +563,8 @@ class PayrollBatchDialog(tk.Toplevel):
                     month_info.end.isoformat(),
                     pay_date,
                     pay_date,
+                    department_id_snapshot,
+                    department_name_snapshot,
                 ),
             )
         self.conn.commit()

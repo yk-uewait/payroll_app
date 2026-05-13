@@ -10,21 +10,21 @@ SETTINGS_PATH = APP_DIR / "settings.json"
 WINDOW_SIZE_PRESETS = {
     "small": {
         "label": "小",
-        "main": "1100x520",
+        "main": "1100x624",
         "payroll_batch": "1280x600",
         "bonus_batch": "1280x660",
         "payroll_editor": "1000x680",
     },
     "medium": {
         "label": "中",
-        "main": "1100x585",
+        "main": "1100x702",
         "payroll_batch": "1360x660",
         "bonus_batch": "1450x760",
         "payroll_editor": "1000x760",
     },
     "large": {
         "label": "大",
-        "main": "1100x650",
+        "main": "1100x780",
         "payroll_batch": "1500x760",
         "bonus_batch": "1600x820",
         "payroll_editor": "1000x820",
