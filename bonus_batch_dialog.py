@@ -9,6 +9,26 @@ from ui_window_utils import show_centered_window, enable_enter_key_navigation
 
 SEPARATOR_COLOR = "#cbd5e1"
 SEPARATOR_HEIGHT = 2
+LABEL_COLUMN_WIDTH = 170
+EMPLOYEE_COLUMN_WIDTH = 130
+DEPARTMENT_WRAP_LENGTH = EMPLOYEE_COLUMN_WIDTH - 12
+
+
+def format_department_for_matrix_display(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    delimiter = "＞" if "＞" in text else ">" if ">" in text else None
+    if not delimiter:
+        return text
+    parts = [part.strip() for part in text.split(delimiter) if part.strip()]
+    if not parts:
+        return text
+    lines = []
+    for idx, part in enumerate(parts):
+        suffix = " ＞" if idx < len(parts) - 1 else ""
+        lines.append(f"{'  ' * idx}{part}{suffix}")
+    return "\n".join(lines)
 
 
 def _format_year_month(value: str) -> str:
@@ -282,6 +302,9 @@ class BonusBatchDialog(tk.Toplevel):
                     value = ""
                 if is_money and value != "":
                     value = fmt_yen(value)
+                is_department_row = item_def["key"] == "department"
+                if is_department_row:
+                    value = format_department_for_matrix_display(value)
 
                 lbl = tk.Label(
                     self.matrix_frame,
@@ -292,8 +315,9 @@ class BonusBatchDialog(tk.Toplevel):
                     highlightbackground="#e5e7eb",
                     padx=6,
                     pady=4,
-                    anchor="e" if is_money else "w",
+                    anchor="e" if is_money else "nw" if is_department_row else "w",
                     justify="left",
+                    wraplength=DEPARTMENT_WRAP_LENGTH if is_department_row else 0,
                     bg=value_bg,
                     font=font,
                 )
@@ -306,9 +330,9 @@ class BonusBatchDialog(tk.Toplevel):
             self.employee_value_widgets.append(line_widgets)
             self.matrix_row_styles.append({"row_kind": "data", "emphasis": emphasis, "bg": value_bg})
 
-        self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=170)
+        self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=LABEL_COLUMN_WIDTH)
         for col_idx in range(1, len(self.rows_data) + 1):
-            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=130)
+            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=EMPLOYEE_COLUMN_WIDTH)
 
         self._apply_selection_highlight()
         self.matrix_frame.update_idletasks()

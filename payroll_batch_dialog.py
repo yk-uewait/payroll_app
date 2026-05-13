@@ -1,5 +1,4 @@
 import tkinter as tk
-import unicodedata
 from tkinter import ttk, messagebox, simpledialog
 
 import db
@@ -7,6 +6,28 @@ import app_settings
 from payroll_editor import PayrollEditorDialog
 from ui_window_utils import show_centered_window, enable_enter_key_navigation
 from utils_dates import compute_pay_date, parse_month
+
+
+LABEL_COLUMN_WIDTH = 170
+EMPLOYEE_COLUMN_WIDTH = 130
+DEPARTMENT_WRAP_LENGTH = EMPLOYEE_COLUMN_WIDTH - 12
+
+
+def format_department_for_matrix_display(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    delimiter = "＞" if "＞" in text else ">" if ">" in text else None
+    if not delimiter:
+        return text
+    parts = [part.strip() for part in text.split(delimiter) if part.strip()]
+    if not parts:
+        return text
+    lines = []
+    for idx, part in enumerate(parts):
+        suffix = " ＞" if idx < len(parts) - 1 else ""
+        lines.append(f"{'  ' * idx}{part}{suffix}")
+    return "\n".join(lines)
 
 
 def _format_year_month(value: str) -> str:
@@ -84,33 +105,22 @@ class PayrollBatchDialog(tk.Toplevel):
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.header_canvas = tk.Canvas(body, highlightthickness=0, height=44)
         self.canvas = tk.Canvas(body, highlightthickness=0)
         self.v_scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
         self.h_scroll = ttk.Scrollbar(body, orient="horizontal", command=self._xview)
         self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self._on_xscroll)
 
-        self.header_canvas.grid(row=0, column=0, sticky="ew")
-        ttk.Frame(body, width=16).grid(row=0, column=1, sticky="ns")
-        self.canvas.grid(row=1, column=0, sticky="nsew")
-        self.v_scroll.grid(row=1, column=1, sticky="ns")
-        self.h_scroll.grid(row=2, column=0, sticky="ew")
-        body.grid_rowconfigure(1, weight=1)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+        body.grid_rowconfigure(0, weight=1)
         body.grid_columnconfigure(0, weight=1)
 
-        self.header_frame = ttk.Frame(self.header_canvas)
-        self.header_window = self.header_canvas.create_window((0, 0), window=self.header_frame, anchor="nw")
         self.matrix_frame = ttk.Frame(self.canvas)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.matrix_frame, anchor="nw")
 
-        self.header_frame.bind("<Configure>", self._on_header_configure)
-        self.header_canvas.bind("<Configure>", self._on_header_canvas_configure)
         self.matrix_frame.bind("<Configure>", self._on_matrix_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
-        self.header_canvas.bind("<MouseWheel>", self._on_mousewheel)
-        self.header_canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
-        self.header_canvas.bind("<Button-4>", self._on_mousewheel)
-        self.header_canvas.bind("<Button-5>", self._on_mousewheel)
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
         self.canvas.bind("<Button-4>", self._on_mousewheel)
@@ -123,35 +133,14 @@ class PayrollBatchDialog(tk.Toplevel):
     def _on_matrix_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
-    def _on_header_configure(self, event=None):
-        self.header_canvas.configure(scrollregion=self.header_canvas.bbox("all"))
-        self._resize_header_canvas()
-
-    def _on_header_canvas_configure(self, event):
-        self._resize_header_canvas(event.width)
-
-    def _resize_header_canvas(self, canvas_width=None):
-        canvas_width = canvas_width or self.header_canvas.winfo_width()
-        req_width = self.header_frame.winfo_reqwidth()
-        req_height = max(self.header_frame.winfo_reqheight(), 1)
-        self.header_canvas.itemconfigure(
-            self.header_window,
-            width=max(canvas_width, req_width),
-            height=req_height,
-        )
-        self.header_canvas.configure(height=req_height)
-        self.header_canvas.configure(scrollregion=self.header_canvas.bbox("all"))
-
     def _on_canvas_configure(self, event):
         self._resize_canvas_window(event.width, event.height)
 
     def _xview(self, *args):
         self.canvas.xview(*args)
-        self.header_canvas.xview(*args)
 
     def _on_xscroll(self, first, last):
         self.h_scroll.set(first, last)
-        self.header_canvas.xview_moveto(first)
 
     def _resize_canvas_window(self, canvas_width=None, canvas_height=None):
         canvas_width = canvas_width or self.canvas.winfo_width()
@@ -175,7 +164,6 @@ class PayrollBatchDialog(tk.Toplevel):
     def _on_shift_mousewheel(self, event):
         move = int(-10 * (event.delta / 120))
         self.canvas.xview_scroll(move, "units")
-        self.header_canvas.xview_scroll(move, "units")
         return "break"
 
     def _close(self):
@@ -254,8 +242,6 @@ class PayrollBatchDialog(tk.Toplevel):
         self._render_matrix(fmt_yen)
 
     def _render_matrix(self, fmt_yen):
-        for child in self.header_frame.winfo_children():
-            child.destroy()
         for child in self.matrix_frame.winfo_children():
             child.destroy()
 
@@ -291,7 +277,7 @@ class PayrollBatchDialog(tk.Toplevel):
         ]
 
         corner_lbl = ttk.Label(
-            self.header_frame,
+            self.matrix_frame,
             text="社員番号\n名前",
             anchor="center",
             justify="center",
@@ -308,7 +294,7 @@ class PayrollBatchDialog(tk.Toplevel):
         for col_idx, row in enumerate(self.rows_data, start=1):
             label_text = f'{row["employee_code"]}\n{row["name_kanji"]}'
             lbl = tk.Label(
-                self.header_frame,
+                self.matrix_frame,
                 text=label_text,
                 relief="solid",
                 borderwidth=1,
@@ -322,7 +308,7 @@ class PayrollBatchDialog(tk.Toplevel):
             self._bind_scroll_events(lbl)
             self.employee_header_labels.append(lbl)
 
-        for row_idx, item_def in enumerate(item_defs):
+        for row_idx, item_def in enumerate(item_defs, start=1):
             source = item_def["source"]
             key = item_def["key"]
             title = item_def["title"]
@@ -372,6 +358,9 @@ class PayrollBatchDialog(tk.Toplevel):
                     value = ""
                 if is_money and value != "":
                     value = fmt_yen(value)
+                is_department_row = source == "field" and key == "department"
+                if is_department_row:
+                    value = format_department_for_matrix_display(value)
 
                 lbl = tk.Label(
                     self.matrix_frame,
@@ -382,8 +371,9 @@ class PayrollBatchDialog(tk.Toplevel):
                     highlightbackground="#e5e7eb",
                     padx=6,
                     pady=4,
-                    anchor="e" if is_money else "w",
+                    anchor="e" if is_money else "nw" if is_department_row else "w",
                     justify="left",
+                    wraplength=DEPARTMENT_WRAP_LENGTH if is_department_row else 0,
                     bg=value_bg,
                     font=font,
                 )
@@ -395,39 +385,12 @@ class PayrollBatchDialog(tk.Toplevel):
             self.employee_value_widgets.append(line_widgets)
             self.matrix_row_styles.append({"row_kind": row_kind, "emphasis": emphasis, "bg": value_bg})
 
-        def display_units(value):
-            units = 0
-            for char in str(value):
-                units += 2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1
-            return units
-
-        def employee_column_width(row):
-            candidates = [f'{row["employee_code"]}\n{row["name_kanji"]}']
-            for item_def in item_defs:
-                if item_def["row_kind"] == "separator" or item_def["is_money"]:
-                    continue
-                if item_def["source"] == "field" and item_def["key"] == "department":
-                    continue
-                value = self._matrix_value(row, item_def["source"], item_def["key"])
-                if value is not None:
-                    candidates.append(str(value))
-            max_chars = 0
-            for text in candidates:
-                for line in str(text).splitlines():
-                    max_chars = max(max_chars, display_units(line))
-            return max(110, min(300, max_chars * 6 + 14))
-
-        self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=170)
-        self.header_frame.grid_columnconfigure(0, weight=0, minsize=170)
-        for col_idx, row in enumerate(self.rows_data, start=1):
-            width = employee_column_width(row)
-            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=width)
-            self.header_frame.grid_columnconfigure(col_idx, weight=0, minsize=width)
+        self.matrix_frame.grid_columnconfigure(0, weight=0, minsize=LABEL_COLUMN_WIDTH)
+        for col_idx in range(1, len(self.rows_data) + 1):
+            self.matrix_frame.grid_columnconfigure(col_idx, weight=0, minsize=EMPLOYEE_COLUMN_WIDTH)
 
         self._apply_selection_highlight()
-        self.header_frame.update_idletasks()
         self.matrix_frame.update_idletasks()
-        self._resize_header_canvas()
         self._resize_canvas_window()
 
     def _build_pay_item_defs(self):

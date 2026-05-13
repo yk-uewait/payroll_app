@@ -446,10 +446,10 @@ class PayrollEditorDialog(tk.Toplevel):
                 ttk.Label(parent, text=label).grid(row=row, column=0, padx=(12, 5), pady=3, sticky="w")
                 var = tk.StringVar(value=self._format_attendance_input(key, saved.get(key, 0)))
                 ent = ttk.Entry(parent, textvariable=var, width=12, justify="right")
-                ent.grid(row=row, column=1, padx=(5, 0), pady=3, sticky="w")
+                ent.grid(row=row, column=1, padx=(5, 12), pady=3, sticky="e")
                 self.attendance_vars[key] = {"var": var, "label": label}
                 row += 1
-        parent.grid_columnconfigure(0, weight=0)
+        parent.grid_columnconfigure(0, weight=1)
         parent.grid_columnconfigure(1, weight=0)
 
     def _parse_attendance_inputs(self) -> dict:
