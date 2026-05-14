@@ -4065,7 +4065,7 @@ def _safe_sheet_title(s: str) -> str:
         s = "sheet"
     return s[:31]
 
-def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
+def _export_payroll_slips_excel_portrait_legacy(conn, target_month: str, file_path: str) -> None:
     """対象年月の給与明細を、1社員1シートのExcelブックとして出力する。"""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -4108,7 +4108,7 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
                 return candidate
         raise ValueError("Excelシート名を一意にできませんでした。")
 
-    def style_range(ws, min_row, max_row, min_col=1, max_col=8, border=None, font_name="Yu Gothic"):
+    def style_range(ws, min_row, max_row, min_col=1, max_col=6, border=None, font_name="Yu Gothic"):
         for row in ws.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col):
             for cell in row:
                 cell.font = cell.font.copy(name=font_name)
@@ -4146,23 +4146,25 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         ws = wb.create_sheet(title=sheet_title)
         ws.sheet_view.showGridLines = False
 
-        widths = [15, 13, 15, 13, 15, 13, 15, 13]
+        widths = [16, 14, 10, 16, 14, 10]
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(idx)].width = width
 
-        ws.merge_cells("A1:H1")
-        title = ws["A1"]
+        ws.merge_cells("A1:F1")
+        company_cell = ws["A1"]
+        company_cell.value = company_name
+        company_cell.font = Font(name=font_name, bold=True, size=12)
+        company_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 24
+
+        ws.merge_cells("A2:F2")
+        title = ws["A2"]
         title.value = "給与明細"
         title.font = Font(name=font_name, bold=True, size=22, color="FFFFFF")
         title.fill = fill_title
         title.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[1].height = 34
-
-        ws.merge_cells("A2:H2")
-        company_cell = ws["A2"]
-        company_cell.value = company_name
-        company_cell.font = Font(name=font_name, bold=True, size=12)
-        company_cell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[2].height = 34
+        ws.row_dimensions[3].height = 8
 
         info = [
             ("対象年月", fmt_year_month(data.get("target_month", ""))),
@@ -4173,23 +4175,31 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
             ("役職", data.get("position_name", "")),
             ("雇用区分", data.get("employment_type_name", "")),
         ]
-        row_idx = 3
+        row_idx = 4
         for idx in range(0, len(info), 2):
             left = info[idx]
             right = info[idx + 1] if idx + 1 < len(info) else ("", "")
             ws.cell(row=row_idx, column=1, value=left[0]).fill = fill_header
-            ws.cell(row=row_idx, column=2, value=left[1])
-            ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=4)
+            left_value = ws.cell(row=row_idx, column=2, value=left[1])
+            ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=3)
             if right[0]:
-                ws.cell(row=row_idx, column=5, value=right[0]).fill = fill_header
-                ws.cell(row=row_idx, column=6, value=right[1])
-                ws.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=8)
+                ws.cell(row=row_idx, column=4, value=right[0]).fill = fill_header
+                right_value = ws.cell(row=row_idx, column=5, value=right[1])
+                ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=6)
+            else:
+                right_value = None
+            if left[0] in {"部署", "役職", "雇用区分"}:
+                left_value.alignment = Alignment(wrap_text=True, vertical="center")
+                ws.row_dimensions[row_idx].height = 38
+            if right[0] in {"部署", "役職", "雇用区分"} and right_value is not None:
+                right_value.alignment = Alignment(wrap_text=True, vertical="center")
+                ws.row_dimensions[row_idx].height = 38
             row_idx += 1
-        style_range(ws, 3, row_idx - 1, border=border, font_name=font_name)
+        style_range(ws, 4, row_idx - 1, border=border, font_name=font_name)
 
         attendance = get_payroll_attendance(conn, int(data.get("payroll_id") or 0))
         row_idx += 1
-        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=8)
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=6)
         section = ws.cell(row=row_idx, column=1, value="勤怠")
         section.font = Font(name=font_name, bold=True)
         section.fill = fill_section
@@ -4197,28 +4207,32 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         row_idx += 1
 
         attendance_start = row_idx
-        for idx in range(0, len(WAGE_LEDGER_ATTENDANCE_FIELDS), 4):
-            fields = WAGE_LEDGER_ATTENDANCE_FIELDS[idx:idx + 4]
+        attendance_blocks = [(1, 2), (3, 4), (5, 6)]
+        for idx in range(0, len(WAGE_LEDGER_ATTENDANCE_FIELDS), 3):
+            fields = WAGE_LEDGER_ATTENDANCE_FIELDS[idx:idx + 3]
             for block, (key, label) in enumerate(fields):
-                label_col = block * 2 + 1
-                value_col = label_col + 1
-                ws.cell(row=row_idx, column=label_col, value=label).fill = fill_header
+                label_col, value_col = attendance_blocks[block]
+                label_cell = ws.cell(row=row_idx, column=label_col, value=label)
+                label_cell.fill = fill_header
+                label_cell.border = border
+                label_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 value_cell = ws.cell(
                     row=row_idx,
                     column=value_col,
                     value=format_attendance_value_for_output(conn, key, attendance.get(key, 0)),
                 )
                 value_cell.alignment = Alignment(horizontal="center", vertical="center")
+                value_cell.border = border
             row_idx += 1
-        style_range(ws, attendance_start, row_idx - 1, border=border, font_name=font_name)
+        style_range(ws, attendance_start, row_idx - 1, border=None, font_name=font_name)
 
         row_idx += 1
         pay_header_row = row_idx
-        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=4)
-        ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=8)
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=3)
+        ws.merge_cells(start_row=row_idx, start_column=4, end_row=row_idx, end_column=6)
         ws.cell(row=row_idx, column=1, value="支給")
-        ws.cell(row=row_idx, column=5, value="控除")
-        for col in (1, 5):
+        ws.cell(row=row_idx, column=4, value="控除")
+        for col in (1, 4):
             cell = ws.cell(row=row_idx, column=col)
             cell.font = Font(name=font_name, bold=True)
             cell.fill = fill_section
@@ -4227,10 +4241,10 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
 
         ws.cell(row=row_idx, column=1, value="項目").fill = fill_header
         ws.cell(row=row_idx, column=2, value="金額").fill = fill_header
-        ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=4)
-        ws.cell(row=row_idx, column=5, value="項目").fill = fill_header
-        ws.cell(row=row_idx, column=6, value="金額").fill = fill_header
-        ws.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=8)
+        ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=3)
+        ws.cell(row=row_idx, column=4, value="項目").fill = fill_header
+        ws.cell(row=row_idx, column=5, value="金額").fill = fill_header
+        ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=6)
         row_idx += 1
 
         pay_items = list(data.get("pay_items") or [])
@@ -4242,46 +4256,50 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
                 item = pay_items[idx]
                 ws.cell(row=row_idx, column=1, value=item.get("name", ""))
                 cell = ws.cell(row=row_idx, column=2, value=amount(item.get("amount")))
-                ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=4)
+                ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=3)
                 cell.number_format = '#,##0'
+            else:
+                ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=3)
             if idx < len(deduction_items):
                 item = deduction_items[idx]
-                ws.cell(row=row_idx, column=5, value=item.get("name", ""))
-                cell = ws.cell(row=row_idx, column=6, value=amount(item.get("amount")))
-                ws.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=8)
+                ws.cell(row=row_idx, column=4, value=item.get("name", ""))
+                cell = ws.cell(row=row_idx, column=5, value=amount(item.get("amount")))
+                ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=6)
                 cell.number_format = '#,##0'
+            else:
+                ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=6)
             row_idx += 1
 
         total_row = row_idx
         ws.cell(row=total_row, column=1, value="総支給額").font = Font(name=font_name, bold=True)
         pay_total_cell = ws.cell(row=total_row, column=2, value=amount(data.get("total_pay")))
-        ws.merge_cells(start_row=total_row, start_column=2, end_row=total_row, end_column=4)
+        ws.merge_cells(start_row=total_row, start_column=2, end_row=total_row, end_column=3)
         pay_total_cell.number_format = '#,##0'
         pay_total_cell.font = Font(name=font_name, bold=True)
-        ws.cell(row=total_row, column=5, value="控除合計").font = Font(name=font_name, bold=True)
-        deduction_total_cell = ws.cell(row=total_row, column=6, value=amount(data.get("total_deduction")))
-        ws.merge_cells(start_row=total_row, start_column=6, end_row=total_row, end_column=8)
+        ws.cell(row=total_row, column=4, value="控除合計").font = Font(name=font_name, bold=True)
+        deduction_total_cell = ws.cell(row=total_row, column=5, value=amount(data.get("total_deduction")))
+        ws.merge_cells(start_row=total_row, start_column=5, end_row=total_row, end_column=6)
         deduction_total_cell.number_format = '#,##0'
         deduction_total_cell.font = Font(name=font_name, bold=True)
 
         style_range(ws, pay_header_row, total_row, border=border, font_name=font_name)
-        for row in ws.iter_rows(min_row=detail_start, max_row=total_row, min_col=2, max_col=8):
+        for row in ws.iter_rows(min_row=detail_start, max_row=total_row, min_col=2, max_col=6):
             for cell in row:
-                if cell.column in {2, 6}:
+                if cell.column in {2, 5}:
                     cell.alignment = Alignment(horizontal="right", vertical="center")
-        for col in range(1, 9):
+        for col in range(1, 7):
             ws.cell(row=total_row, column=col).fill = fill_total
             ws.cell(row=total_row, column=col).border = total_border
 
         row_idx = total_row + 2
-        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=4)
-        ws.merge_cells(start_row=row_idx, start_column=5, end_row=row_idx, end_column=8)
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=3)
+        ws.merge_cells(start_row=row_idx, start_column=4, end_row=row_idx, end_column=6)
         ws.cell(row=row_idx, column=1, value="差引支給額").font = Font(name=font_name, bold=True, size=16)
-        net_cell = ws.cell(row=row_idx, column=5, value=amount(data.get("net_pay")))
+        net_cell = ws.cell(row=row_idx, column=4, value=amount(data.get("net_pay")))
         net_cell.number_format = '#,##0 "円"'
         net_cell.font = Font(name=font_name, bold=True, size=18)
         net_cell.alignment = Alignment(horizontal="right", vertical="center")
-        for col in range(1, 9):
+        for col in range(1, 7):
             ws.cell(row=row_idx, column=col).fill = fill_net
             ws.cell(row=row_idx, column=col).border = total_border
         ws.row_dimensions[row_idx].height = 30
@@ -4289,27 +4307,583 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         note = data.get("note", "")
         if note:
             row_idx += 2
-            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=8)
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=6)
             ws.cell(row=row_idx, column=1, value=f"備考: {note}")
             ws.cell(row=row_idx, column=1).alignment = Alignment(wrap_text=True, vertical="top")
 
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=8):
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=6):
             for cell in row:
                 cell.font = cell.font.copy(name=font_name)
                 if cell.value is not None and cell.alignment.horizontal is None:
                     cell.alignment = cell.alignment.copy(horizontal="left")
 
-        ws.print_area = f"A1:H{ws.max_row}"
+        ws.print_area = f"A1:F{ws.max_row}"
         ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
         ws.page_setup.paperSize = ws.PAPERSIZE_A4
         ws.page_setup.fitToWidth = 1
         ws.page_setup.fitToHeight = 1
         ws.sheet_properties.pageSetUpPr.fitToPage = True
-        ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.35, bottom=0.35, header=0.1, footer=0.1)
+        ws.page_margins = PageMargins(left=0.45, right=0.45, top=0.45, bottom=0.35, header=0.1, footer=0.1)
         ws.print_options.horizontalCentered = True
         ws.print_options.verticalCentered = False
 
     wb.save(file_path)
+
+def _export_payroll_slips_excel_landscape_legacy(conn, target_month: str, file_path: str) -> None:
+    """対象年月の給与明細を、A4横のブロック型レイアウトで出力する。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.page import PageMargins
+
+    output_rows = get_payroll_output_data_for_month(conn, target_month)
+    company = get_company_settings(conn)
+    company_name = row_get(company, "company_name", "") if company else ""
+
+    def fmt_year_month(value: str) -> str:
+        text = str(value or "")
+        try:
+            y, m = text.split("-", 1)
+            return f"{int(y):04d}年{int(m):02d}月"
+        except Exception:
+            return text
+
+    def fmt_date(value: str) -> str:
+        text = str(value or "")
+        try:
+            y, m, d = text.split("-", 2)
+            return f"{int(y):04d}年{int(m):02d}月{int(d):02d}日"
+        except Exception:
+            return text
+
+    def amount(value) -> int:
+        return int(value or 0)
+
+    def unique_sheet_title(base: str, used: set[str]) -> str:
+        title = _safe_sheet_title(base)
+        if title not in used:
+            used.add(title)
+            return title
+        for idx in range(2, 1000):
+            suffix = f"_{idx}"
+            candidate = _safe_sheet_title(f"{title[:31 - len(suffix)]}{suffix}")
+            if candidate not in used:
+                used.add(candidate)
+                return candidate
+        raise ValueError("Excelシート名を一意にできませんでした。")
+
+    def employee_detail(employee_id: int) -> dict:
+        row = conn.execute(
+            """
+            SELECT tax_type, dependents_count, std_monthly_wage, std_pension_wage
+            FROM employees
+            WHERE employee_id = ?
+            """,
+            (employee_id,),
+        ).fetchone()
+        if not row:
+            return {}
+        return {
+            "tax_type": row_get(row, "tax_type", ""),
+            "dependents_count": row_get(row, "dependents_count", ""),
+            "std_monthly_wage": row_get(row, "std_monthly_wage", 0),
+            "std_pension_wage": row_get(row, "std_pension_wage", 0),
+        }
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    used_titles: set[str] = set()
+    blue = "0068B7"
+    deep_blue = "005A9C"
+    pale_blue = "EAF3FB"
+    light_blue = "DCEBF7"
+    white = "FFFFFF"
+    line_blue = "2F75B5"
+    thin = Side(style="thin", color=line_blue)
+    medium = Side(style="medium", color=line_blue)
+    block_border = Border(left=medium, right=medium, top=medium, bottom=medium)
+    cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill("solid", fgColor=blue)
+    pale_fill = PatternFill("solid", fgColor=pale_blue)
+    light_fill = PatternFill("solid", fgColor=light_blue)
+    net_fill = PatternFill("solid", fgColor="D9EAD3")
+    font_name = "Yu Gothic"
+
+    def set_font(cell, *, size=10, bold=False, color="000000"):
+        cell.font = Font(name=font_name, size=size, bold=bold, color=color)
+
+    def apply_block_border(ws, top, left, bottom, right):
+        for row in range(top, bottom + 1):
+            for col in range(left, right + 1):
+                ws.cell(row=row, column=col).border = cell_border
+        for col in range(left, right + 1):
+            ws.cell(row=top, column=col).border = ws.cell(row=top, column=col).border.copy(top=medium)
+            ws.cell(row=bottom, column=col).border = ws.cell(row=bottom, column=col).border.copy(bottom=medium)
+        for row in range(top, bottom + 1):
+            ws.cell(row=row, column=left).border = ws.cell(row=row, column=left).border.copy(left=medium)
+            ws.cell(row=row, column=right).border = ws.cell(row=row, column=right).border.copy(right=medium)
+
+    def block_header(ws, row, col1, col2, title):
+        ws.merge_cells(start_row=row, start_column=col1, end_row=row, end_column=col2)
+        cell = ws.cell(row=row, column=col1, value=title)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        set_font(cell, size=11, bold=True, color=white)
+
+    def write_label_value(ws, row, label_col, value_col, label, value, value_end_col=None, money=False):
+        if value_end_col and value_end_col > value_col:
+            ws.merge_cells(start_row=row, start_column=value_col, end_row=row, end_column=value_end_col)
+        label_cell = ws.cell(row=row, column=label_col, value=label)
+        value_cell = ws.cell(row=row, column=value_col, value=amount(value) if money else value)
+        label_cell.fill = pale_fill
+        label_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        value_cell.alignment = Alignment(horizontal="right" if money else "left", vertical="center", wrap_text=True)
+        if money:
+            value_cell.number_format = '#,##0'
+        set_font(label_cell)
+        set_font(value_cell)
+
+    def write_item_block(ws, row_start, row_end, label_col, amount_col, amount_end_col, items, total_label, total_amount):
+        row = row_start
+        visible_items = [item for item in items if amount(item.get("amount")) != 0]
+        if not visible_items:
+            visible_items = list(items[: max(0, row_end - row_start)])
+        for item in visible_items[: max(0, row_end - row_start)]:
+            ws.cell(row=row, column=label_col, value=item.get("name", ""))
+            ws.cell(row=row, column=amount_col, value=amount(item.get("amount")))
+            ws.merge_cells(start_row=row, start_column=amount_col, end_row=row, end_column=amount_end_col)
+            ws.cell(row=row, column=label_col).fill = pale_fill
+            ws.cell(row=row, column=label_col).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            ws.cell(row=row, column=amount_col).alignment = Alignment(horizontal="right", vertical="center")
+            ws.cell(row=row, column=amount_col).number_format = '#,##0'
+            set_font(ws.cell(row=row, column=label_col))
+            set_font(ws.cell(row=row, column=amount_col))
+            row += 1
+        while row < row_end:
+            ws.merge_cells(start_row=row, start_column=amount_col, end_row=row, end_column=amount_end_col)
+            row += 1
+        ws.cell(row=row_end, column=label_col, value=total_label)
+        total_cell = ws.cell(row=row_end, column=amount_col, value=amount(total_amount))
+        ws.merge_cells(start_row=row_end, start_column=amount_col, end_row=row_end, end_column=amount_end_col)
+        ws.cell(row=row_end, column=label_col).fill = light_fill
+        total_cell.fill = light_fill
+        ws.cell(row=row_end, column=label_col).alignment = Alignment(horizontal="left", vertical="center")
+        total_cell.alignment = Alignment(horizontal="right", vertical="center")
+        total_cell.number_format = '#,##0'
+        set_font(ws.cell(row=row_end, column=label_col), bold=True)
+        set_font(total_cell, bold=True)
+
+    if not output_rows:
+        ws = wb.create_sheet(title=_safe_sheet_title("給与明細"))
+        ws["A1"] = f"{fmt_year_month(target_month)} 給与明細"
+        ws["A2"] = "対象データがありません。"
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        wb.save(file_path)
+        return
+
+    for data in output_rows:
+        detail = employee_detail(int(data.get("employee_id") or 0))
+        sheet_title = unique_sheet_title(
+            f"{data.get('employee_code', '')}_{data.get('employee_name', '')}",
+            used_titles,
+        )
+        ws = wb.create_sheet(title=sheet_title)
+        ws.sheet_view.showGridLines = False
+
+        widths = [12, 10, 10, 12, 10, 10, 12, 10, 10, 14, 10, 10]
+        for idx, width in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+        for row in range(1, 28):
+            ws.row_dimensions[row].height = 20
+
+        ws.merge_cells("A1:F1")
+        title = ws["A1"]
+        title.value = f"{fmt_year_month(data.get('target_month', ''))}分 給与明細"
+        title.alignment = Alignment(horizontal="center", vertical="center")
+        set_font(title, size=18, bold=True, color=deep_blue)
+        ws.row_dimensions[1].height = 28
+
+        ws.merge_cells("G1:L1")
+        company_cell = ws["G1"]
+        company_cell.value = company_name
+        company_cell.alignment = Alignment(horizontal="right", vertical="center")
+        set_font(company_cell, size=12, bold=True)
+
+        write_label_value(ws, 2, 1, 2, "氏名", data.get("employee_name", ""), 4)
+        write_label_value(ws, 3, 1, 2, "社員番号", data.get("employee_code", ""), 4)
+        write_label_value(ws, 4, 1, 2, "部署", data.get("department_name", ""), 4)
+        write_label_value(ws, 5, 1, 2, "役職", data.get("position_name", ""), 4)
+        write_label_value(ws, 6, 1, 2, "雇用区分", data.get("employment_type_name", ""), 4)
+        write_label_value(ws, 2, 6, 7, "対象年月", fmt_year_month(data.get("target_month", "")), 8)
+        write_label_value(ws, 3, 6, 7, "支給日", fmt_date(data.get("pay_date", "")), 8)
+        ws.merge_cells("I2:N6")
+        info_note = ws["I2"]
+        info_note.value = "給与計算結果に基づく明細です。"
+        info_note.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        info_note.fill = pale_fill
+        set_font(info_note, size=10)
+        apply_block_border(ws, 1, 1, 6, 14)
+        # 上部基本情報欄の空白セルは罫線を消し、情報があるセルだけを表として見せる。
+        blank_border = Border()
+        for row in range(2, 7):
+            if ws.cell(row=row, column=5).value in (None, ""):
+                ws.cell(row=row, column=5).border = blank_border
+        for row in range(4, 7):
+            for col in range(6, 9):
+                if ws.cell(row=row, column=col).value in (None, ""):
+                    ws.cell(row=row, column=col).border = blank_border
+        for r in (4, 5, 6):
+            ws.row_dimensions[r].height = 25
+
+        attendance = get_payroll_attendance(conn, int(data.get("payroll_id") or 0))
+        block_header(ws, 8, 1, 3, "勤怠")
+        row = 9
+        for key, label in WAGE_LEDGER_ATTENDANCE_FIELDS:
+            write_label_value(
+                ws,
+                row,
+                1,
+                3,
+                label,
+                format_attendance_value_for_output(conn, key, attendance.get(key, 0)),
+            )
+            row += 1
+        apply_block_border(ws, 8, 1, 21, 3)
+
+        pay_items = list(data.get("pay_items") or [])
+        deduction_items = list(data.get("system_deductions") or []) + list(data.get("deduction_items") or [])
+
+        block_header(ws, 8, 4, 7, "支給")
+        write_item_block(ws, 9, 21, 4, 6, 7, pay_items, "総支給額", data.get("total_pay"))
+        apply_block_border(ws, 8, 4, 21, 7)
+
+        block_header(ws, 8, 8, 11, "控除")
+        write_item_block(ws, 9, 21, 8, 10, 11, deduction_items, "控除合計", data.get("total_deduction"))
+        apply_block_border(ws, 8, 8, 21, 11)
+
+        block_header(ws, 8, 12, 14, "その他")
+        write_label_value(ws, 9, 12, 14, "税額表区分", detail.get("tax_type", ""))
+        write_label_value(ws, 10, 12, 14, "扶養人数", detail.get("dependents_count", ""))
+        write_label_value(ws, 11, 12, 14, "標準報酬月額(健保)", detail.get("std_monthly_wage", 0), money=True)
+        write_label_value(ws, 12, 12, 14, "標準報酬月額(厚年)", detail.get("std_pension_wage", 0), money=True)
+        apply_block_border(ws, 8, 12, 14, 14)
+
+        block_header(ws, 16, 12, 14, "差引合計")
+        write_label_value(ws, 17, 12, 14, "差引支給額", data.get("net_pay"), money=True)
+        ws.merge_cells("L18:N21")
+        net_big = ws["L18"]
+        net_big.value = amount(data.get("net_pay"))
+        net_big.number_format = '#,##0 "円"'
+        net_big.fill = net_fill
+        net_big.alignment = Alignment(horizontal="center", vertical="center")
+        set_font(net_big, size=18, bold=True)
+        apply_block_border(ws, 16, 12, 21, 14)
+
+        ws.merge_cells("A23:N25")
+        note_cell = ws["A23"]
+        note_cell.value = data.get("note", "") or ""
+        note_cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        set_font(note_cell)
+        block_header(ws, 22, 1, 14, "備考")
+        apply_block_border(ws, 22, 1, 25, 14)
+
+        for row in ws.iter_rows(min_row=1, max_row=25, min_col=1, max_col=14):
+            for cell in row:
+                if cell.value is not None and cell.font.name != font_name:
+                    set_font(cell)
+                if cell.value is not None and cell.alignment.vertical is None:
+                    cell.alignment = cell.alignment.copy(vertical="center")
+
+        ws.print_area = "A1:N25"
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 1
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.25, bottom=0.25, header=0.1, footer=0.1)
+        ws.print_options.horizontalCentered = True
+        ws.print_options.verticalCentered = True
+
+    wb.save(file_path)
+
+def _export_payroll_slips_excel_layout_experiment(conn, target_month: str, file_path: str) -> None:
+    """対象年月の給与明細を、A4横の整理済みブロック型レイアウトで出力する。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.page import PageMargins
+
+    output_rows = get_payroll_output_data_for_month(conn, target_month)
+    company = get_company_settings(conn)
+    company_name = row_get(company, "company_name", "") if company else ""
+
+    def fmt_year_month(value: str) -> str:
+        text = str(value or "")
+        try:
+            y, m = text.split("-", 1)
+            return f"{int(y):04d}年{int(m):02d}月"
+        except Exception:
+            return text
+
+    def fmt_date(value: str) -> str:
+        text = str(value or "")
+        try:
+            y, m, d = text.split("-", 2)
+            return f"{int(y):04d}年{int(m):02d}月{int(d):02d}日"
+        except Exception:
+            return text
+
+    def amount(value) -> int:
+        return int(value or 0)
+
+    def unique_sheet_title(base: str, used: set[str]) -> str:
+        title = _safe_sheet_title(base)
+        if title not in used:
+            used.add(title)
+            return title
+        for idx in range(2, 1000):
+            suffix = f"_{idx}"
+            candidate = _safe_sheet_title(f"{title[:31 - len(suffix)]}{suffix}")
+            if candidate not in used:
+                used.add(candidate)
+                return candidate
+        raise ValueError("Excelシート名を一意にできませんでした。")
+
+    def employee_detail(employee_id: int) -> dict:
+        row = conn.execute(
+            """
+            SELECT tax_type, dependents_count, std_monthly_wage, std_pension_wage
+            FROM employees
+            WHERE employee_id = ?
+            """,
+            (employee_id,),
+        ).fetchone()
+        if not row:
+            return {}
+        return {
+            "tax_type": row_get(row, "tax_type", ""),
+            "dependents_count": row_get(row, "dependents_count", ""),
+            "std_monthly_wage": row_get(row, "std_monthly_wage", 0),
+            "std_pension_wage": row_get(row, "std_pension_wage", 0),
+        }
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    used_titles: set[str] = set()
+    font_name = "Yu Gothic"
+    blue = "0068B7"
+    deep_blue = "005A9C"
+    pale_blue = "EAF3FB"
+    light_blue = "DCEBF7"
+    net_green = "D9EAD3"
+    white = "FFFFFF"
+    line_blue = "2F75B5"
+    thin = Side(style="thin", color=line_blue)
+    medium = Side(style="medium", color=line_blue)
+    cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill("solid", fgColor=blue)
+    label_fill = PatternFill("solid", fgColor=pale_blue)
+    total_fill = PatternFill("solid", fgColor=light_blue)
+    net_fill = PatternFill("solid", fgColor=net_green)
+
+    def set_font(cell, *, size=10, bold=False, color="000000"):
+        cell.font = Font(name=font_name, size=size, bold=bold, color=color)
+
+    def apply_block_border(ws, top, left, bottom, right):
+        for row in range(top, bottom + 1):
+            for col in range(left, right + 1):
+                ws.cell(row=row, column=col).border = cell_border
+        for col in range(left, right + 1):
+            ws.cell(row=top, column=col).border = ws.cell(row=top, column=col).border.copy(top=medium)
+            ws.cell(row=bottom, column=col).border = ws.cell(row=bottom, column=col).border.copy(bottom=medium)
+        for row in range(top, bottom + 1):
+            ws.cell(row=row, column=left).border = ws.cell(row=row, column=left).border.copy(left=medium)
+            ws.cell(row=row, column=right).border = ws.cell(row=row, column=right).border.copy(right=medium)
+
+    def block_header(ws, row, col1, col2, title):
+        ws.merge_cells(start_row=row, start_column=col1, end_row=row, end_column=col2)
+        cell = ws.cell(row=row, column=col1, value=title)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        set_font(cell, size=11, bold=True, color=white)
+
+    def write_label_value(ws, row, label_col, value_col, label, value, value_end_col=None, money=False, center_value=False):
+        if value_end_col and value_end_col > value_col:
+            ws.merge_cells(start_row=row, start_column=value_col, end_row=row, end_column=value_end_col)
+        label_cell = ws.cell(row=row, column=label_col, value=label)
+        value_cell = ws.cell(row=row, column=value_col, value=amount(value) if money else value)
+        label_cell.fill = label_fill
+        label_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        value_cell.alignment = Alignment(
+            horizontal="right" if money else ("center" if center_value else "left"),
+            vertical="center",
+            wrap_text=True,
+        )
+        if money:
+            value_cell.number_format = '#,##0'
+        set_font(label_cell)
+        set_font(value_cell)
+
+    def write_item_block(ws, row_start, row_end, label_col, amount_col, amount_end_col, items, total_label, total_amount):
+        row = row_start
+        visible_items = [item for item in items if amount(item.get("amount")) != 0]
+        if not visible_items:
+            visible_items = list(items[: max(0, row_end - row_start)])
+        for item in visible_items[: max(0, row_end - row_start)]:
+            label_cell = ws.cell(row=row, column=label_col, value=item.get("name", ""))
+            amount_cell = ws.cell(row=row, column=amount_col, value=amount(item.get("amount")))
+            ws.merge_cells(start_row=row, start_column=amount_col, end_row=row, end_column=amount_end_col)
+            label_cell.fill = label_fill
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            amount_cell.alignment = Alignment(horizontal="right", vertical="center")
+            amount_cell.number_format = '#,##0'
+            set_font(label_cell)
+            set_font(amount_cell)
+            row += 1
+        while row < row_end:
+            ws.merge_cells(start_row=row, start_column=amount_col, end_row=row, end_column=amount_end_col)
+            row += 1
+        label_cell = ws.cell(row=row_end, column=label_col, value=total_label)
+        amount_cell = ws.cell(row=row_end, column=amount_col, value=amount(total_amount))
+        ws.merge_cells(start_row=row_end, start_column=amount_col, end_row=row_end, end_column=amount_end_col)
+        label_cell.fill = total_fill
+        amount_cell.fill = total_fill
+        label_cell.alignment = Alignment(horizontal="left", vertical="center")
+        amount_cell.alignment = Alignment(horizontal="right", vertical="center")
+        amount_cell.number_format = '#,##0'
+        set_font(label_cell, bold=True)
+        set_font(amount_cell, bold=True)
+
+    if not output_rows:
+        ws = wb.create_sheet(title=_safe_sheet_title("給与明細"))
+        ws["A1"] = f"{fmt_year_month(target_month)} 給与明細"
+        ws["A2"] = "対象データがありません。"
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        wb.save(file_path)
+        return
+
+    for data in output_rows:
+        detail = employee_detail(int(data.get("employee_id") or 0))
+        sheet_title = unique_sheet_title(
+            f"{data.get('employee_code', '')}_{data.get('employee_name', '')}",
+            used_titles,
+        )
+        ws = wb.create_sheet(title=sheet_title)
+        ws.sheet_view.showGridLines = False
+
+        widths = [12, 10, 10, 12, 10, 10, 12, 10, 10, 14, 10, 10]
+        for idx, width in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+        for row in range(1, 31):
+            ws.row_dimensions[row].height = 20
+
+        ws.merge_cells("A1:F1")
+        title = ws["A1"]
+        title.value = f"{fmt_year_month(data.get('target_month', ''))}分 給与明細"
+        title.alignment = Alignment(horizontal="center", vertical="center")
+        set_font(title, size=18, bold=True, color=deep_blue)
+        ws.row_dimensions[1].height = 28
+
+        ws.merge_cells("G1:L1")
+        company_cell = ws["G1"]
+        company_cell.value = company_name
+        company_cell.alignment = Alignment(horizontal="right", vertical="center")
+        set_font(company_cell, size=12, bold=True)
+
+        write_label_value(ws, 2, 1, 2, "氏名", data.get("employee_name", ""), 4)
+        write_label_value(ws, 3, 1, 2, "社員番号", data.get("employee_code", ""), 4)
+        write_label_value(ws, 4, 1, 2, "部署", data.get("department_name", ""), 4)
+        write_label_value(ws, 5, 1, 2, "役職", data.get("position_name", ""), 4)
+        write_label_value(ws, 6, 1, 2, "雇用区分", data.get("employment_type_name", ""), 4)
+        write_label_value(ws, 2, 7, 8, "対象年月", fmt_year_month(data.get("target_month", "")), 9)
+        write_label_value(ws, 3, 7, 8, "支給日", fmt_date(data.get("pay_date", "")), 9)
+        apply_block_border(ws, 1, 1, 6, 12)
+        for r in (4, 5, 6):
+            ws.row_dimensions[r].height = 25
+
+        attendance = get_payroll_attendance(conn, int(data.get("payroll_id") or 0))
+        block_header(ws, 8, 1, 3, "勤怠")
+        row = 9
+        for key, label in WAGE_LEDGER_ATTENDANCE_FIELDS:
+            write_label_value(
+                ws,
+                row,
+                1,
+                3,
+                label,
+                format_attendance_value_for_output(conn, key, attendance.get(key, 0)),
+                center_value=True,
+            )
+            row += 1
+        apply_block_border(ws, 8, 1, 21, 3)
+
+        pay_items = list(data.get("pay_items") or [])
+        deduction_items = list(data.get("system_deductions") or []) + list(data.get("deduction_items") or [])
+
+        block_header(ws, 8, 4, 6, "支給")
+        write_item_block(ws, 9, 21, 4, 5, 6, pay_items, "総支給額", data.get("total_pay"))
+        apply_block_border(ws, 8, 4, 21, 6)
+
+        block_header(ws, 8, 7, 9, "控除")
+        write_item_block(ws, 9, 21, 7, 8, 9, deduction_items, "控除合計", data.get("total_deduction"))
+        apply_block_border(ws, 8, 7, 21, 9)
+
+        block_header(ws, 8, 10, 12, "その他")
+        write_label_value(ws, 9, 10, 11, "税額表区分", detail.get("tax_type", ""), 12)
+        write_label_value(ws, 10, 10, 11, "扶養人数", detail.get("dependents_count", ""), 12)
+        write_label_value(ws, 11, 10, 11, "標準報酬月額(健保)", detail.get("std_monthly_wage", 0), 12, money=True)
+        write_label_value(ws, 12, 10, 11, "標準報酬月額(厚年)", detail.get("std_pension_wage", 0), 12, money=True)
+        apply_block_border(ws, 8, 10, 21, 12)
+
+        ws.merge_cells("A23:C24")
+        ws.merge_cells("D23:L24")
+        net_label = ws["A23"]
+        net_label.value = "差引支給額"
+        net_label.fill = header_fill
+        net_label.alignment = Alignment(horizontal="center", vertical="center")
+        set_font(net_label, size=16, bold=True, color=white)
+        net_big = ws["D23"]
+        net_big.value = amount(data.get("net_pay"))
+        net_big.number_format = '#,##0 "円"'
+        net_big.fill = net_fill
+        net_big.alignment = Alignment(horizontal="right", vertical="center")
+        set_font(net_big, size=20, bold=True)
+        apply_block_border(ws, 23, 1, 24, 12)
+
+        ws.merge_cells("A27:L29")
+        note_cell = ws["A27"]
+        note_cell.value = data.get("note", "") or ""
+        note_cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        set_font(note_cell)
+        block_header(ws, 26, 1, 12, "備考")
+        apply_block_border(ws, 26, 1, 29, 12)
+
+        for row in ws.iter_rows(min_row=1, max_row=29, min_col=1, max_col=12):
+            for cell in row:
+                if cell.value is not None and cell.font.name != font_name:
+                    set_font(cell)
+                if cell.value is not None and cell.alignment.vertical is None:
+                    cell.alignment = cell.alignment.copy(vertical="center")
+
+        ws.print_area = "A1:L29"
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 1
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.25, bottom=0.25, header=0.1, footer=0.1)
+        ws.print_options.horizontalCentered = True
+        ws.print_options.verticalCentered = True
+
+    wb.save(file_path)
+
+def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
+    """対象年月の給与明細を、A4横のブロック型レイアウトで出力する。"""
+    return _export_payroll_slips_excel_landscape_legacy(conn, target_month, file_path)
 
 def _export_pay_deduct_report_month_transposed(conn, target_month: str, file_path: str) -> None:
     output_rows = get_payroll_output_data_for_month(conn, target_month)
