@@ -4065,6 +4065,35 @@ def _safe_sheet_title(s: str) -> str:
         s = "sheet"
     return s[:31]
 
+def _fmt_japanese_year_month(value: str) -> str:
+    text = str(value or "")
+    try:
+        y, m = text.split("-", 1)
+        return f"{int(y):04d} 年 {int(m)} 月"
+    except Exception:
+        return text
+
+def _fmt_japanese_date(value: str) -> str:
+    text = str(value or "")
+    try:
+        y, m, d = text.split("-", 2)
+        return f"{int(y):04d} 年 {int(m)} 月 {int(d)} 日"
+    except Exception:
+        return text
+
+def _unique_sheet_title(base: str, used: set[str]) -> str:
+    title = _safe_sheet_title(base)
+    if title not in used:
+        used.add(title)
+        return title
+    for idx in range(2, 1000):
+        suffix = f"_{idx}"
+        candidate = _safe_sheet_title(f"{title[:31 - len(suffix)]}{suffix}")
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+    raise ValueError("Excelシート名を一意にできませんでした。")
+
 def _export_payroll_slips_excel_portrait_legacy(conn, target_month: str, file_path: str) -> None:
     """対象年月の給与明細を、1社員1シートのExcelブックとして出力する。"""
     from openpyxl import Workbook
@@ -4882,8 +4911,236 @@ def _export_payroll_slips_excel_layout_experiment(conn, target_month: str, file_
     wb.save(file_path)
 
 def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
-    """対象年月の給与明細を、A4横のブロック型レイアウトで出力する。"""
-    return _export_payroll_slips_excel_landscape_legacy(conn, target_month, file_path)
+    """対象年月の給与明細を、Excelテンプレートへ値を流し込んで出力する。"""
+    template_path = Path(__file__).resolve().parent / "templates" / "payroll_slip_template.xlsx"
+    if not template_path.exists():
+        raise FileNotFoundError(
+            "給与明細テンプレートが見つかりません。\n"
+            "templates/payroll_slip_template.xlsx を配置してください。"
+        )
+
+    output_rows = get_payroll_output_data_for_month(conn, target_month)
+    company = get_company_settings(conn)
+    company_name = row_get(company, "company_name", "") if company else ""
+
+    attendance_fields = [
+        ("scheduled_work_days", "所定労働日数"),
+        ("work_days", "労働日数"),
+        ("work_minutes", "労働時間数"),
+        ("overtime_minutes", "時間外労働時間"),
+        ("holiday_work_minutes", "休日労働時間"),
+        ("night_work_minutes", "深夜労働時間"),
+        ("paid_leave_days", "有給取得日数"),
+        ("absence_days", "欠勤日数"),
+        ("late_count", "遅刻回数"),
+        ("early_leave_count", "早退回数"),
+        ("late_early_leave_minutes", "遅刻早退時間"),
+        ("total_overtime_minutes", "総残業時間"),
+    ]
+    summary_labels = [
+        ("課税支給額", "taxable_pay"),
+        ("非課税支給額", "non_taxable_pay"),
+        ("総支給額", "total_pay"),
+        ("控除合計額", "total_deduction"),
+        ("差引支給額", "net_pay"),
+    ]
+    cumulative_labels = ["課税支給累計", "社会保険料累計", "所得税累計"]
+    item_start_row = 12
+    item_end_row = 23
+
+    def amount(value) -> int:
+        return int(value or 0)
+
+    def write_money(ws, cell_ref: str, value) -> None:
+        cell = ws[cell_ref]
+        cell.value = None if value is None else amount(value)
+        cell.number_format = '#,##0'
+
+    def payroll_year_to_date_totals(employee_id: int, pay_date: str) -> dict:
+        try:
+            end_date = datetime.strptime(str(pay_date or ""), "%Y-%m-%d").date()
+        except Exception:
+            return {
+                "taxable_pay": None,
+                "social_insurance": None,
+                "income_tax": None,
+            }
+
+        start_date = f"{end_date.year:04d}-01-01"
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM payroll_monthly
+            WHERE employee_id = ?
+              AND pay_date_applied >= ?
+              AND pay_date_applied <= ?
+            ORDER BY pay_date_applied, target_month, payroll_id
+            """,
+            (employee_id, start_date, end_date.isoformat()),
+        ).fetchall()
+
+        taxable_pay = 0
+        social_insurance = 0
+        income_tax = 0
+        for row in rows:
+            basis = build_payroll_calculation_basis(conn, row)
+            taxable_pay += int(basis.get("taxable_pay") or 0)
+            social_insurance += (
+                int(basis.get("health_insurance") or 0)
+                + int(basis.get("nursing_care_insurance") or 0)
+                + int(basis.get("child_care_contribution") or 0)
+                + int(basis.get("pension_insurance") or 0)
+                + int(basis.get("employment_insurance") or 0)
+            )
+            income_tax += int(basis.get("income_tax") or 0)
+
+        return {
+            "taxable_pay": taxable_pay,
+            "social_insurance": social_insurance,
+            "income_tax": income_tax,
+        }
+
+    def clear_cells(ws, cells: list[str]) -> None:
+        for cell_ref in cells:
+            ws[cell_ref].value = None
+
+    def write_items(ws, items: list[dict], label_col: str, amount_col: str) -> None:
+        clear_cells(ws, [f"{label_col}{row}" for row in range(item_start_row, item_end_row + 1)])
+        clear_cells(ws, [f"{amount_col}{row}" for row in range(item_start_row, item_end_row + 1)])
+        visible_items = [item for item in items if amount(item.get("amount")) != 0]
+        if not visible_items:
+            visible_items = list(items)
+        for row, item in zip(range(item_start_row, item_end_row + 1), visible_items[:12]):
+            ws[f"{label_col}{row}"] = item.get("name", "") or ""
+            write_money(ws, f"{amount_col}{row}", item.get("amount"))
+
+    def normalize_template_labels(ws) -> None:
+        ws["A1"] = "給与明細書"
+        ws["B11"] = "勤怠"
+        ws["I11"] = "支給"
+        ws["P11"] = "控除"
+        ws["W11"] = "支給控除集計"
+        ws["W18"] = "本年累計"
+        for row, (_key, label) in zip(range(item_start_row, item_end_row + 1), attendance_fields):
+            ws[f"B{row}"] = label
+        for row, (label, _key) in zip(range(12, 17), summary_labels):
+            ws[f"W{row}"] = label
+        for row, label in zip(range(19, 22), cumulative_labels):
+            ws[f"W{row}"] = label
+
+    def apply_header_bottom_borders(ws) -> None:
+        from openpyxl.styles import Border, Side
+
+        bottom = Side(style="thin", color="B7C9DD")
+        for cell_range in ["B11:G11", "I11:N11", "P11:U11", "W11:AB11", "W18:AB18"]:
+            for row in ws[cell_range]:
+                for cell in row:
+                    cell.border = Border(bottom=bottom)
+
+    def apply_shrink_to_fit(ws) -> None:
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                cell.alignment = cell.alignment.copy(shrink_to_fit=True)
+
+    def apply_template_font(ws) -> None:
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                cell.font = cell.font.copy(name="Yu Gothic")
+
+    wb = load_workbook(template_path)
+    template_ws = wb[wb.sheetnames[0]]
+    template_print_area = template_ws.print_area
+    template_ws.title = "_template"
+    used_titles: set[str] = set()
+
+    def apply_template_print_area(ws) -> None:
+        if not template_print_area:
+            return
+        ranges = []
+        for area in str(template_print_area).split(","):
+            ranges.append(area.split("!", 1)[1] if "!" in area else area)
+        ws.print_area = ",".join(ranges)
+
+    if not output_rows:
+        template_ws.title = _unique_sheet_title("給与明細", used_titles)
+        apply_template_print_area(template_ws)
+        normalize_template_labels(template_ws)
+        apply_header_bottom_borders(template_ws)
+        apply_shrink_to_fit(template_ws)
+        template_ws["A1"] = "給与明細書"
+        template_ws["E4"] = ""
+        template_ws["E5"] = "対象データがありません。"
+        for cell_ref in ["E6", "E7", "E8", "X4", "X5", "R7", "B29"]:
+            template_ws[cell_ref] = ""
+        for row in range(item_start_row, item_end_row + 1):
+            template_ws[f"F{row}"] = ""
+        write_items(template_ws, [], "I", "M")
+        write_items(template_ws, [], "P", "T")
+        for row in range(12, 17):
+            template_ws[f"AA{row}"] = ""
+        for row in range(19, 22):
+            template_ws[f"AA{row}"] = ""
+        apply_template_font(template_ws)
+        template_ws["AA16"].font = template_ws["AA16"].font.copy(bold=True)
+        wb.save(file_path)
+        return
+
+    created_sheets = []
+    for data in output_rows:
+        ws = wb.copy_worksheet(template_ws)
+        ws.title = _unique_sheet_title(
+            f"{data.get('employee_code', '')}_{data.get('employee_name', '')}",
+            used_titles,
+        )
+        created_sheets.append(ws)
+        apply_template_print_area(ws)
+        normalize_template_labels(ws)
+        apply_header_bottom_borders(ws)
+
+        japanese_month = _fmt_japanese_year_month(data.get("target_month", ""))
+        ws["A1"] = "給与明細書"
+        ws["E4"] = data.get("employee_code", "") or ""
+        ws["E5"] = data.get("employee_name", "") or ""
+        ws["E6"] = data.get("department_name", "") or ""
+        ws["E7"] = data.get("position_name", "") or ""
+        ws["E8"] = data.get("employment_type_name", "") or ""
+        ws["X4"] = japanese_month
+        ws["X5"] = _fmt_japanese_date(data.get("pay_date", ""))
+        ws["R7"] = company_name
+
+        attendance = get_payroll_attendance(conn, int(data.get("payroll_id") or 0))
+        for row, (key, label) in zip(range(item_start_row, item_end_row + 1), attendance_fields):
+            ws[f"B{row}"] = label
+            ws[f"F{row}"] = format_attendance_value_for_output(conn, key, attendance.get(key, 0))
+
+        pay_items = list(data.get("pay_items") or [])
+        deduction_items = list(data.get("system_deductions") or []) + list(data.get("deduction_items") or [])
+        write_items(ws, pay_items, "I", "M")
+        write_items(ws, deduction_items, "P", "T")
+
+        for row, (label, key) in zip(range(12, 17), summary_labels):
+            ws[f"W{row}"] = label
+            write_money(ws, f"AA{row}", data.get(key))
+        ws["AA16"].font = ws["AA16"].font.copy(name="Yu Gothic", bold=True)
+
+        for row, label in zip(range(19, 22), cumulative_labels):
+            ws[f"W{row}"] = label
+        cumulative = payroll_year_to_date_totals(
+            int(data.get("employee_id") or 0),
+            data.get("pay_date", ""),
+        )
+        write_money(ws, "AA19", cumulative.get("taxable_pay"))
+        write_money(ws, "AA20", cumulative.get("social_insurance"))
+        write_money(ws, "AA21", cumulative.get("income_tax"))
+
+        ws["B29"] = data.get("note", "") or ""
+        apply_shrink_to_fit(ws)
+        apply_template_font(ws)
+        ws["AA16"].font = ws["AA16"].font.copy(bold=True)
+
+    wb.remove(template_ws)
+    wb.active = wb.index(created_sheets[0])
+    wb.save(file_path)
 
 def _export_pay_deduct_report_month_transposed(conn, target_month: str, file_path: str) -> None:
     output_rows = get_payroll_output_data_for_month(conn, target_month)
