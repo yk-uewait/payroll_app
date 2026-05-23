@@ -6,6 +6,7 @@ import calendar
 from openpyxl import load_workbook
 import math
 import re
+import unicodedata
 import app_settings
 
 DB_PATH = Path(__file__).resolve().parent / "payroll.db"
@@ -256,17 +257,20 @@ def row_get(r, key, default=None):
 WITHHOLDING_YEAR_DEFAULT = 2026  # 令和8年
 
 def normalize_employee_code(employee_code) -> str:
-    code = str(employee_code or "").strip()
+    code = unicodedata.normalize("NFKC", str(employee_code or "").strip())
     if not code:
         raise ValueError("社員番号を入力してください。")
     if not code.isdigit():
         raise ValueError("社員番号は数字で入力してください。")
-    if len(code) > 5:
-        raise ValueError("社員番号は5桁以内で入力してください。")
-    number = int(code)
-    if number < 1 or number > 99999:
-        raise ValueError("社員番号は1〜99999の範囲で入力してください。")
-    return f"{number:05d}"
+    if len(code) > 7:
+        raise ValueError("社員番号は7桁以内で入力してください。")
+    return code.zfill(7)
+
+def normalize_employee_code_if_possible(employee_code) -> str:
+    code = unicodedata.normalize("NFKC", str(employee_code or "").strip())
+    if code and code.isdigit() and len(code) <= 7:
+        return code.zfill(7)
+    return str(employee_code or "").strip()
 
 def _normalize_existing_employee_codes(conn):
     rows = conn.execute(
@@ -277,26 +281,57 @@ def _normalize_existing_employee_codes(conn):
         """
     ).fetchall()
     targets = {}
+    invalid = []
     for row in rows:
-        raw = str(row["employee_code"]).strip()
-        if raw.isdigit() and len(raw) <= 5 and 1 <= int(raw) <= 99999:
-            normalized = f"{int(raw):05d}"
-            targets.setdefault(normalized, []).append((int(row["employee_id"]), raw))
+        raw = unicodedata.normalize("NFKC", str(row["employee_code"] or "").strip())
+        if raw.isdigit() and len(raw) <= 7:
+            targets.setdefault(raw.zfill(7), []).append((int(row["employee_id"]), str(row["employee_code"]).strip()))
+        else:
+            invalid.append((int(row["employee_id"]), str(row["employee_code"]).strip()))
+
+    if invalid:
+        details = ", ".join(f"employee_id={employee_id}: {raw}" for employee_id, raw in invalid[:10])
+        raise ValueError(f"7桁化できない社員番号があります。数字のみ7桁以内に修正してください。{details}")
 
     conflicted = {
         code
         for code, items in targets.items()
-        if len({raw for _employee_id, raw in items}) > 1
+        if len({employee_id for employee_id, _raw in items}) > 1
     }
+    if conflicted:
+        details = ", ".join(
+            f"{code}: " + ", ".join(f"employee_id={employee_id}({raw})" for employee_id, raw in targets[code])
+            for code in sorted(conflicted)[:10]
+        )
+        raise ValueError(f"7桁化後に重複する社員番号があります。社員マスタを確認してください。{details}")
+
     for normalized, items in targets.items():
-        if normalized in conflicted:
-            continue
         for employee_id, raw in items:
             if raw != normalized:
                 conn.execute(
                     "UPDATE employees SET employee_code = ?, updated_at = datetime('now') WHERE employee_id = ?",
                     (normalized, employee_id),
                 )
+
+def _normalize_employee_code_snapshots(conn, table_name: str) -> None:
+    if not _table_exists(conn, table_name) or not _column_exists(conn, table_name, "employee_code_snapshot"):
+        return
+    rows = conn.execute(
+        f"""
+        SELECT rowid AS snapshot_rowid, employee_code_snapshot
+        FROM {table_name}
+        WHERE employee_code_snapshot IS NOT NULL
+          AND TRIM(employee_code_snapshot) <> ''
+        """
+    ).fetchall()
+    for row in rows:
+        raw = str(row_get(row, "employee_code_snapshot", "") or "").strip()
+        normalized = normalize_employee_code_if_possible(raw)
+        if normalized != raw:
+            conn.execute(
+                f"UPDATE {table_name} SET employee_code_snapshot=?, updated_at=datetime('now') WHERE rowid=?",
+                (normalized, row_get(row, "snapshot_rowid")),
+            )
 
 # Dynamic payroll item migration flags.
 # Keep tax/insurance calculations on the legacy fixed-column path until each
@@ -530,9 +565,114 @@ def upsert_employee(
     bank_account_holder="",
     is_social_insurance_target=0,
     is_employment_insurance_target=1,
+    employee_id=None,
 ):
     employee_code = normalize_employee_code(employee_code)
     cur = conn.cursor()
+    if employee_id is not None:
+        duplicate = cur.execute(
+            """
+            SELECT employee_id
+            FROM employees
+            WHERE employee_code = ?
+              AND employee_id <> ?
+            """,
+            (employee_code, int(employee_id)),
+        ).fetchone()
+        if duplicate:
+            raise ValueError("同じ社員番号の社員が既に登録されています。")
+
+        cur.execute(
+            """
+            UPDATE employees SET
+              employee_code=?,
+              name_kanji=?,
+              name_kana=?,
+              department=?,
+              payday_group=?,
+              is_deleted=0,
+              deleted_at=NULL,
+              std_monthly_wage=?,
+              std_pension_wage=?,
+              is_social_insurance_target=?,
+              is_employment_insurance_target=?,
+              tax_type=?,
+              dependents_count=?,
+              work_prefecture_name=?,
+              address_postal_code=?,
+              address_prefecture=?,
+              address_city=?,
+              address_detail=?,
+              resident_tax_municipality=?,
+              phone=?,
+              email=?,
+              bank_name=?,
+              bank_branch_name=?,
+              bank_account_type=?,
+              bank_account_number=?,
+              bank_account_holder=?,
+              birth_date=?,
+              payment_schedule_id=?,
+              hire_date=?,
+              is_on_leave=?,
+              leave_start_date=?,
+              leave_expected_end_date=?,
+              leave_memo=?,
+              leave_date=?,
+              retirement_processed=?,
+              memo=?,
+              department_id=?,
+              position_id=?,
+              employment_type_id=?,
+              updated_at=datetime('now')
+            WHERE employee_id=?
+            """,
+            (
+                employee_code,
+                name_kanji,
+                name_kana,
+                department,
+                payday_group,
+                std_health,
+                std_pension,
+                int(is_social_insurance_target or 0),
+                int(is_employment_insurance_target or 0),
+                tax_type,
+                dependents_count,
+                work_prefecture_name,
+                address_postal_code,
+                address_prefecture,
+                address_city,
+                address_detail,
+                resident_tax_municipality,
+                phone,
+                email,
+                bank_name,
+                bank_branch_name,
+                bank_account_type,
+                bank_account_number,
+                bank_account_holder,
+                birth_date,
+                payment_schedule_id,
+                hire_date,
+                int(is_on_leave or 0),
+                leave_start_date,
+                leave_expected_end_date,
+                leave_memo or "",
+                leave_date,
+                int(retirement_processed or 0),
+                memo,
+                department_id,
+                position_id,
+                employment_type_id,
+                int(employee_id),
+            ),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("更新対象の社員が見つかりません。")
+        conn.commit()
+        return
+
     cur.execute(
         """
         INSERT INTO employees(
@@ -647,6 +787,47 @@ def get_employee_department_snapshot(conn, employee_id: int) -> tuple[int | None
         return int(department_id), get_department_full_name(conn, department_id) or fallback_name
     return None, fallback_name
 
+def get_employee_snapshot(conn, employee_id: int) -> dict:
+    row = conn.execute(
+        """
+        SELECT
+          e.employee_code,
+          e.name_kanji,
+          e.department,
+          e.department_id,
+          e.position_id,
+          e.employment_type_id,
+          COALESCE(pos.name, '') AS position_name,
+          COALESCE(et.name, '') AS employment_type_name
+        FROM employees e
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
+        WHERE e.employee_id = ?
+        """,
+        (employee_id,),
+    ).fetchone()
+    if not row:
+        return {
+            "employee_code_snapshot": "",
+            "employee_name_snapshot": "",
+            "department_id_snapshot": None,
+            "department_name_snapshot": "",
+            "position_name_snapshot": "",
+            "employment_type_name_snapshot": "",
+        }
+
+    department_id = row_get(row, "department_id", None)
+    legacy_department = row_get(row, "department", "") or ""
+    department_name = get_department_full_name(conn, department_id) if department_id else ""
+    return {
+        "employee_code_snapshot": normalize_employee_code_if_possible(row_get(row, "employee_code", "")),
+        "employee_name_snapshot": row_get(row, "name_kanji", "") or "",
+        "department_id_snapshot": int(department_id) if department_id else None,
+        "department_name_snapshot": department_name or legacy_department,
+        "position_name_snapshot": row_get(row, "position_name", "") or "",
+        "employment_type_name_snapshot": row_get(row, "employment_type_name", "") or "",
+    }
+
 
 def _backfill_department_snapshots(conn, table_name: str) -> None:
     if not _table_exists(conn, table_name):
@@ -690,9 +871,75 @@ def _backfill_department_snapshots(conn, table_name: str) -> None:
                 params,
             )
 
+def _backfill_employee_snapshots(conn, table_name: str) -> None:
+    if not _table_exists(conn, table_name):
+        return
+    rows = conn.execute(
+        f"""
+        SELECT
+          t.rowid AS snapshot_rowid,
+          t.employee_id,
+          t.employee_code_snapshot,
+          t.employee_name_snapshot,
+          t.position_name_snapshot,
+          t.employment_type_name_snapshot
+        FROM {table_name} t
+        JOIN employees e ON e.employee_id = t.employee_id
+        WHERE COALESCE(t.employee_code_snapshot, '') = ''
+           OR COALESCE(t.employee_name_snapshot, '') = ''
+           OR COALESCE(t.position_name_snapshot, '') = ''
+           OR COALESCE(t.employment_type_name_snapshot, '') = ''
+        """
+    ).fetchall()
+    for row in rows:
+        snapshot = get_employee_snapshot(conn, int(row_get(row, "employee_id", 0) or 0))
+        updates = []
+        params = []
+        for column in (
+            "employee_code_snapshot",
+            "employee_name_snapshot",
+            "position_name_snapshot",
+            "employment_type_name_snapshot",
+        ):
+            value = snapshot[column]
+            if value and not (row_get(row, column, "") or "").strip():
+                updates.append(f"{column}=?")
+                params.append(value)
+        if updates:
+            params.append(row_get(row, "snapshot_rowid"))
+            conn.execute(
+                f"UPDATE {table_name} SET {', '.join(updates)}, updated_at=datetime('now') WHERE rowid=?",
+                params,
+            )
+
 
 def _row_with_current_department_name(conn, r) -> dict:
+    return _row_with_snapshot_display_fields(conn, r)
+
+def _row_with_snapshot_display_fields(conn, r) -> dict:
+    if r is None:
+        return {}
     row = dict(r)
+    employee_code_snapshot = (row.get("employee_code_snapshot") or "").strip()
+    employee_name_snapshot = (row.get("employee_name_snapshot") or "").strip()
+    position_name_snapshot = (row.get("position_name_snapshot") or "").strip()
+    employment_type_name_snapshot = (row.get("employment_type_name_snapshot") or "").strip()
+
+    if employee_code_snapshot:
+        row["employee_code"] = normalize_employee_code_if_possible(employee_code_snapshot)
+    elif row.get("employee_code"):
+        row["employee_code"] = normalize_employee_code_if_possible(row.get("employee_code"))
+    if employee_name_snapshot:
+        row["name_kanji"] = employee_name_snapshot
+    if position_name_snapshot:
+        row["position_name"] = position_name_snapshot
+    elif "position_name" not in row:
+        row["position_name"] = ""
+    if employment_type_name_snapshot:
+        row["employment_type_name"] = employment_type_name_snapshot
+    elif "employment_type_name" not in row:
+        row["employment_type_name"] = ""
+
     snapshot_name = (row.get("department_name_snapshot") or "").strip()
     if snapshot_name:
         row["department"] = snapshot_name
@@ -717,7 +964,7 @@ def list_employees(conn, include_deleted: bool = False):
             SELECT *
             FROM employees
             ORDER BY
-              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
+              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
               employee_code,
               employee_id
             """
@@ -729,7 +976,7 @@ def list_employees(conn, include_deleted: bool = False):
             FROM employees
             WHERE COALESCE(is_deleted, 0) = 0
             ORDER BY
-              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
+              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
               employee_code,
               employee_id
             """
@@ -2235,15 +2482,17 @@ def ensure_monthly_records(conn, target_month: str, wage_period_start: str, wage
     for e in employees:
         employee_id = e["employee_id"]
         pay_date_auto, pay_date_applied = pay_date_by_employee[employee_id]
-        department_id_snapshot, department_name_snapshot = get_employee_department_snapshot(conn, int(employee_id))
+        snapshot = get_employee_snapshot(conn, int(employee_id))
         cur.execute(
             """
             INSERT OR IGNORE INTO payroll_monthly(
               target_month, employee_id,
               wage_period_start, wage_period_end,
               pay_date_auto, pay_date_applied,
-              department_id_snapshot, department_name_snapshot
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              employee_code_snapshot, employee_name_snapshot,
+              department_id_snapshot, department_name_snapshot,
+              position_name_snapshot, employment_type_name_snapshot
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 target_month,
@@ -2252,8 +2501,12 @@ def ensure_monthly_records(conn, target_month: str, wage_period_start: str, wage
                 wage_period_end,
                 pay_date_auto,
                 pay_date_applied,
-                department_id_snapshot,
-                department_name_snapshot,
+                snapshot["employee_code_snapshot"],
+                snapshot["employee_name_snapshot"],
+                snapshot["department_id_snapshot"],
+                snapshot["department_name_snapshot"],
+                snapshot["position_name_snapshot"],
+                snapshot["employment_type_name_snapshot"],
             ),
         )
     conn.commit()
@@ -2292,6 +2545,8 @@ def get_payroll_rows(conn, target_month: str):
           COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target,
           e.tax_type, e.dependents_count, e.work_prefecture_name, e.birth_date,
           e.hire_date, e.leave_date,
+          COALESCE(pos.name, '') AS position_name,
+          COALESCE(et.name, '') AS employment_type_name,
 
           -- 総支給（入力値の合計：税社保計算はまだ含めない）
           (
@@ -2308,6 +2563,8 @@ def get_payroll_rows(conn, target_month: str):
 
         FROM payroll_monthly p
         JOIN employees e ON e.employee_id = p.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
         WHERE p.target_month=?
         ORDER BY e.employee_id
         """,
@@ -2408,6 +2665,8 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
           COALESCE(e.is_employment_insurance_target, 1) AS is_employment_insurance_target,
           e.tax_type, e.dependents_count, e.work_prefecture_name, e.birth_date,
           e.hire_date, e.leave_date,
+          COALESCE(pos.name, '') AS position_name,
+          COALESCE(et.name, '') AS employment_type_name,
 
           (
             p.officer_pay + p.base_salary + p.deemed_ot + p.overtime_pay + p.special_allow + p.commute_nontax
@@ -2421,6 +2680,8 @@ def get_payroll_rows_by_pay_date(conn, target_month: str, pay_date_applied: str)
 
         FROM payroll_monthly p
         JOIN employees e ON e.employee_id = p.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
         WHERE p.target_month = ? AND p.pay_date_applied = ?
         ORDER BY e.employee_id
         """,
@@ -2811,11 +3072,21 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE payroll_monthly ADD COLUMN emp_ins_rate_employer REAL NOT NULL DEFAULT 0")
     if not _column_exists(conn, "payroll_monthly", "emp_ins_employer"):
         conn.execute("ALTER TABLE payroll_monthly ADD COLUMN emp_ins_employer INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "payroll_monthly", "employee_code_snapshot"):
+        conn.execute("ALTER TABLE payroll_monthly ADD COLUMN employee_code_snapshot TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "payroll_monthly", "employee_name_snapshot"):
+        conn.execute("ALTER TABLE payroll_monthly ADD COLUMN employee_name_snapshot TEXT NOT NULL DEFAULT ''")
     if not _column_exists(conn, "payroll_monthly", "department_id_snapshot"):
         conn.execute("ALTER TABLE payroll_monthly ADD COLUMN department_id_snapshot INTEGER")
     if not _column_exists(conn, "payroll_monthly", "department_name_snapshot"):
         conn.execute("ALTER TABLE payroll_monthly ADD COLUMN department_name_snapshot TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "payroll_monthly", "position_name_snapshot"):
+        conn.execute("ALTER TABLE payroll_monthly ADD COLUMN position_name_snapshot TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "payroll_monthly", "employment_type_name_snapshot"):
+        conn.execute("ALTER TABLE payroll_monthly ADD COLUMN employment_type_name_snapshot TEXT NOT NULL DEFAULT ''")
     _backfill_department_snapshots(conn, "payroll_monthly")
+    _backfill_employee_snapshots(conn, "payroll_monthly")
+    _normalize_employee_code_snapshots(conn, "payroll_monthly")
 
     # -------------------------------------------------
     # payroll_bonus
@@ -2879,11 +3150,21 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN withholding_tax_applied INTEGER NOT NULL DEFAULT 0")
     if not _column_exists(conn, "payroll_bonus", "withholding_tax_override_reason"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN withholding_tax_override_reason TEXT")
+    if not _column_exists(conn, "payroll_bonus", "employee_code_snapshot"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN employee_code_snapshot TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "payroll_bonus", "employee_name_snapshot"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN employee_name_snapshot TEXT NOT NULL DEFAULT ''")
     if not _column_exists(conn, "payroll_bonus", "department_id_snapshot"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN department_id_snapshot INTEGER")
     if not _column_exists(conn, "payroll_bonus", "department_name_snapshot"):
         conn.execute("ALTER TABLE payroll_bonus ADD COLUMN department_name_snapshot TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "payroll_bonus", "position_name_snapshot"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN position_name_snapshot TEXT NOT NULL DEFAULT ''")
+    if not _column_exists(conn, "payroll_bonus", "employment_type_name_snapshot"):
+        conn.execute("ALTER TABLE payroll_bonus ADD COLUMN employment_type_name_snapshot TEXT NOT NULL DEFAULT ''")
     _backfill_department_snapshots(conn, "payroll_bonus")
+    _backfill_employee_snapshots(conn, "payroll_bonus")
+    _normalize_employee_code_snapshots(conn, "payroll_bonus")
 
     # -------------------------------------------------
     # social_insurance_rates
@@ -5028,6 +5309,11 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         for row, label in zip(range(19, 22), cumulative_labels):
             ws[f"W{row}"] = label
 
+    def apply_note_header_style(ws) -> None:
+        from openpyxl.styles import Font
+
+        ws["B29"].font = Font(name="Yu Gothic", size=10, bold=True)
+
     def apply_header_bottom_borders(ws) -> None:
         from openpyxl.styles import Border, Side
 
@@ -5065,13 +5351,15 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         template_ws.title = _unique_sheet_title("給与明細", used_titles)
         apply_template_print_area(template_ws)
         normalize_template_labels(template_ws)
+        apply_note_header_style(template_ws)
         apply_header_bottom_borders(template_ws)
         apply_shrink_to_fit(template_ws)
         template_ws["A1"] = "給与明細書"
         template_ws["E4"] = ""
         template_ws["E5"] = "対象データがありません。"
-        for cell_ref in ["E6", "E7", "E8", "X4", "X5", "R7", "B29"]:
+        for cell_ref in ["E6", "E7", "E8", "X4", "X5", "R7", "B30"]:
             template_ws[cell_ref] = ""
+        template_ws["B29"] = "備考"
         for row in range(item_start_row, item_end_row + 1):
             template_ws[f"F{row}"] = ""
         write_items(template_ws, [], "I", "M")
@@ -5095,6 +5383,7 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         created_sheets.append(ws)
         apply_template_print_area(ws)
         normalize_template_labels(ws)
+        apply_note_header_style(ws)
         apply_header_bottom_borders(ws)
 
         japanese_month = _fmt_japanese_year_month(data.get("target_month", ""))
@@ -5133,9 +5422,11 @@ def export_payroll_slips_excel(conn, target_month: str, file_path: str) -> None:
         write_money(ws, "AA20", cumulative.get("social_insurance"))
         write_money(ws, "AA21", cumulative.get("income_tax"))
 
-        ws["B29"] = data.get("note", "") or ""
+        ws["B29"] = "備考"
+        ws["B30"] = data.get("note", "") or ""
         apply_shrink_to_fit(ws)
         apply_template_font(ws)
+        apply_note_header_style(ws)
         ws["AA16"].font = ws["AA16"].font.copy(bold=True)
 
     wb.remove(template_ws)
@@ -5981,7 +6272,32 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis:
                 department = row_get(payroll_row, "department", "")
                 if department:
                     return department
+        for _mm, bonus_row in by_emp_bonus.get(employee_id, []) or []:
+            department = row_get(bonus_row, "department_name_snapshot", "")
+            if department:
+                return department
         return row_get(employee_row, "department", "")
+
+    def employee_display_for_ledger(employee_id, employee_row):
+        display = {
+            "employee_code": row_get(employee_row, "employee_code", ""),
+            "name_kanji": row_get(employee_row, "name_kanji", ""),
+            "department": employee_department_for_ledger(employee_id, employee_row),
+        }
+        for mm in range(1, 13):
+            rows = by_emp_month.get((employee_id, mm), []) or []
+            if rows:
+                row = rows[0]
+                display["employee_code"] = row_get(row, "employee_code", "") or display["employee_code"]
+                display["name_kanji"] = row_get(row, "name_kanji", "") or display["name_kanji"]
+                display["department"] = row_get(row, "department", "") or display["department"]
+                return display
+        for _mm, bonus_row in by_emp_bonus.get(employee_id, []) or []:
+            display["employee_code"] = row_get(bonus_row, "employee_code_snapshot", "") or display["employee_code"]
+            display["name_kanji"] = row_get(bonus_row, "employee_name_snapshot", "") or display["name_kanji"]
+            display["department"] = row_get(bonus_row, "department_name_snapshot", "") or display["department"]
+            return display
+        return display
 
     def write_row(ws, row_idx, label, values, fill=None, bold=False):
         cell = ws.cell(row=row_idx, column=1, value=label)
@@ -6006,9 +6322,10 @@ def _export_wage_ledger_year_with_totals(conn, year: int, file_path: str, basis:
 
     for e in emps:
         emp_id = int(row_get(e, "employee_id", 0) or 0)
-        emp_code = row_get(e, "employee_code", "")
-        name = row_get(e, "name_kanji", "")
-        dept = employee_department_for_ledger(emp_id, e)
+        display = employee_display_for_ledger(emp_id, e)
+        emp_code = display["employee_code"]
+        name = display["name_kanji"]
+        dept = display["department"]
         ws = wb.create_sheet(title=_safe_sheet_title(f"{emp_code}_{name}"))
 
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
@@ -6214,11 +6531,15 @@ def list_bonus_rows(conn, target_month: str):
         """
         SELECT b.*,
                e.employee_code, e.name_kanji, e.department, e.department_id,
-               e.tax_type, e.dependents_count, e.work_prefecture_name
+               e.tax_type, e.dependents_count, e.work_prefecture_name,
+               COALESCE(pos.name, '') AS position_name,
+               COALESCE(et.name, '') AS employment_type_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
         WHERE b.target_month=?
-        ORDER BY e.employee_code
+        ORDER BY COALESCE(NULLIF(b.employee_code_snapshot, ''), e.employee_code)
         """,
         (target_month,),
     )
@@ -6231,9 +6552,13 @@ def get_bonus_by_id(conn, bonus_id: int):
         """
         SELECT b.*,
                e.employee_code, e.name_kanji, e.department, e.department_id,
-               e.tax_type, e.dependents_count, e.work_prefecture_name
+               e.tax_type, e.dependents_count, e.work_prefecture_name,
+               COALESCE(pos.name, '') AS position_name,
+               COALESCE(et.name, '') AS employment_type_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
         WHERE b.bonus_id=?
         """,
         (bonus_id,),
@@ -6242,23 +6567,41 @@ def get_bonus_by_id(conn, bonus_id: int):
     return _row_with_current_department_name(conn, row) if row else None
 
 def upsert_bonus(conn, target_month: str, pay_date: str, employee_id: int, bonus_amount: int, note: str | None = None):
-    department_id_snapshot, department_name_snapshot = get_employee_department_snapshot(conn, int(employee_id))
+    snapshot = get_employee_snapshot(conn, int(employee_id))
     cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO payroll_bonus (
           target_month, pay_date, employee_id, bonus_amount, note,
-          department_id_snapshot, department_name_snapshot
+          employee_code_snapshot, employee_name_snapshot,
+          department_id_snapshot, department_name_snapshot,
+          position_name_snapshot, employment_type_name_snapshot
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(target_month, employee_id) DO UPDATE SET
           pay_date=excluded.pay_date,
           bonus_amount=excluded.bonus_amount,
           note=excluded.note,
+          employee_code_snapshot=CASE
+            WHEN COALESCE(payroll_bonus.employee_code_snapshot, '') = '' THEN excluded.employee_code_snapshot
+            ELSE payroll_bonus.employee_code_snapshot
+          END,
+          employee_name_snapshot=CASE
+            WHEN COALESCE(payroll_bonus.employee_name_snapshot, '') = '' THEN excluded.employee_name_snapshot
+            ELSE payroll_bonus.employee_name_snapshot
+          END,
           department_id_snapshot=COALESCE(payroll_bonus.department_id_snapshot, excluded.department_id_snapshot),
           department_name_snapshot=CASE
             WHEN COALESCE(payroll_bonus.department_name_snapshot, '') = '' THEN excluded.department_name_snapshot
             ELSE payroll_bonus.department_name_snapshot
+          END,
+          position_name_snapshot=CASE
+            WHEN COALESCE(payroll_bonus.position_name_snapshot, '') = '' THEN excluded.position_name_snapshot
+            ELSE payroll_bonus.position_name_snapshot
+          END,
+          employment_type_name_snapshot=CASE
+            WHEN COALESCE(payroll_bonus.employment_type_name_snapshot, '') = '' THEN excluded.employment_type_name_snapshot
+            ELSE payroll_bonus.employment_type_name_snapshot
           END,
           updated_at=datetime('now')
         """,
@@ -6268,8 +6611,12 @@ def upsert_bonus(conn, target_month: str, pay_date: str, employee_id: int, bonus
             employee_id,
             bonus_amount,
             note,
-            department_id_snapshot,
-            department_name_snapshot,
+            snapshot["employee_code_snapshot"],
+            snapshot["employee_name_snapshot"],
+            snapshot["department_id_snapshot"],
+            snapshot["department_name_snapshot"],
+            snapshot["position_name_snapshot"],
+            snapshot["employment_type_name_snapshot"],
         ),
     )
     conn.commit()
@@ -6280,9 +6627,13 @@ def get_bonus_by_employee_month(conn, target_month: str, employee_id: int):
         """
         SELECT b.*,
                e.employee_code, e.name_kanji, e.department, e.department_id,
-               e.tax_type, e.dependents_count, e.work_prefecture_name
+               e.tax_type, e.dependents_count, e.work_prefecture_name,
+               COALESCE(pos.name, '') AS position_name,
+               COALESCE(et.name, '') AS employment_type_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
         WHERE b.target_month=? AND b.employee_id=?
         """,
         (target_month, employee_id),
@@ -6447,9 +6798,13 @@ def list_bonus_rows_by_pay_date(conn, target_month: str, pay_date: str):
         """
         SELECT b.*,
                e.employee_code, e.name_kanji, e.department, e.department_id,
-               e.tax_type, e.dependents_count, e.work_prefecture_name
+               e.tax_type, e.dependents_count, e.work_prefecture_name,
+               COALESCE(pos.name, '') AS position_name,
+               COALESCE(et.name, '') AS employment_type_name
         FROM payroll_bonus b
         JOIN employees e ON e.employee_id = b.employee_id
+        LEFT JOIN positions pos ON pos.id = e.position_id
+        LEFT JOIN employment_types et ON et.id = e.employment_type_id
         WHERE b.target_month = ? AND b.pay_date = ?
         ORDER BY e.employee_id
         """,

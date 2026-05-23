@@ -68,8 +68,12 @@ CREATE TABLE IF NOT EXISTS payroll_monthly (
   pay_date_override_reason     TEXT,
   pay_date_overridden_at       TEXT,
   pay_date_overridden_by       TEXT,
+  employee_code_snapshot       TEXT NOT NULL DEFAULT '',
+  employee_name_snapshot       TEXT NOT NULL DEFAULT '',
   department_id_snapshot       INTEGER,
   department_name_snapshot     TEXT NOT NULL DEFAULT '',
+  position_name_snapshot       TEXT NOT NULL DEFAULT '',
+  employment_type_name_snapshot TEXT NOT NULL DEFAULT '',
 
   -- Pay items (minimal: fixed + 5 free)
   officer_pay                  INTEGER NOT NULL DEFAULT 0,
@@ -197,8 +201,12 @@ CREATE TABLE IF NOT EXISTS payroll_bonus (
   target_month                TEXT NOT NULL,            -- YYYY-MM
   pay_date                    TEXT NOT NULL DEFAULT '', -- YYYY-MM-DD
   employee_id                 INTEGER NOT NULL,
+  employee_code_snapshot      TEXT NOT NULL DEFAULT '',
+  employee_name_snapshot      TEXT NOT NULL DEFAULT '',
   department_id_snapshot      INTEGER,
   department_name_snapshot    TEXT NOT NULL DEFAULT '',
+  position_name_snapshot      TEXT NOT NULL DEFAULT '',
+  employment_type_name_snapshot TEXT NOT NULL DEFAULT '',
 
   bonus_amount                INTEGER NOT NULL DEFAULT 0,
   note                        TEXT,

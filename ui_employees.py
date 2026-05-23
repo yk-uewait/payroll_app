@@ -461,23 +461,28 @@ class _LegacyEmployeeEditorDialog(tk.Toplevel):
             messagebox.showerror("入力エラー", "同じ社員番号の社員が既に登録されています。", parent=self)
             return
 
-        db.upsert_employee(
-            self.conn,
-            code, name, dept, 0,
-            std_health, std_pension,
-            tax_type, deps, pref,
-            address_city,
-            address_detail,
-            birth,
-            payment_schedule_id,
-            hire_date,
-            leave_date=leave_date,
-            retirement_processed=retirement_processed,
-            memo=memo,
-            department_id=department_id,
-            position_id=position_id,
-            employment_type_id=employment_type_id,
-        )
+        try:
+            db.upsert_employee(
+                self.conn,
+                code, name, dept, 0,
+                std_health, std_pension,
+                tax_type, deps, pref,
+                address_city,
+                address_detail,
+                birth,
+                payment_schedule_id,
+                hire_date,
+                leave_date=leave_date,
+                retirement_processed=retirement_processed,
+                memo=memo,
+                department_id=department_id,
+                position_id=position_id,
+                employment_type_id=employment_type_id,
+                employee_id=self.employee_id,
+            )
+        except Exception as e:
+            messagebox.showerror("保存エラー", str(e), parent=self)
+            return
 
         if callable(self.on_saved):
             self.on_saved()
@@ -1049,7 +1054,7 @@ class EmployeeEditorDialog(tk.Toplevel):
             FROM employees
             WHERE {where_sql}
             ORDER BY
-              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
+              CASE WHEN employee_code GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN 0 ELSE 1 END,
               employee_code,
               employee_id
             """
@@ -1278,46 +1283,51 @@ class EmployeeEditorDialog(tk.Toplevel):
             messagebox.showerror("入力エラー", "同じ社員番号の社員が既に登録されています。", parent=self)
             return
 
-        db.upsert_employee(
-            self.conn,
-            code,
-            name,
-            dept,
-            0,
-            std_health,
-            std_pension,
-            tax_type,
-            deps,
-            self.var_social_prefecture.get().strip(),
-            self.var_address_postal_code.get().strip(),
-            self.var_address_prefecture.get().strip(),
-            self.var_address_city.get().strip(),
-            self.var_address_detail.get().strip(),
-            self.var_resident_tax_municipality.get().strip(),
-            birth,
-            payment_schedule_id,
-            hire_date,
-            is_on_leave,
-            leave_start_date,
-            leave_expected_end_date,
-            leave_memo,
-            leave_date,
-            retirement_processed,
-            memo,
-            department_id,
-            position_id,
-            employment_type_id,
-            name_kana=self.var_name_kana.get().strip(),
-            phone=self.var_phone.get().strip(),
-            email=self.var_email.get().strip(),
-            bank_name=self.var_bank_name.get().strip(),
-            bank_branch_name=self.var_bank_branch_name.get().strip(),
-            bank_account_type=self.var_bank_account_type.get().strip(),
-            bank_account_number=self.var_bank_account_number.get().strip(),
-            bank_account_holder=self.var_bank_account_holder.get().strip(),
-            is_social_insurance_target=int(self.var_social_insurance_target.get() or 0),
-            is_employment_insurance_target=int(self.var_employment_insurance_target.get() or 0),
-        )
+        try:
+            db.upsert_employee(
+                self.conn,
+                code,
+                name,
+                dept,
+                0,
+                std_health,
+                std_pension,
+                tax_type,
+                deps,
+                self.var_social_prefecture.get().strip(),
+                self.var_address_postal_code.get().strip(),
+                self.var_address_prefecture.get().strip(),
+                self.var_address_city.get().strip(),
+                self.var_address_detail.get().strip(),
+                self.var_resident_tax_municipality.get().strip(),
+                birth,
+                payment_schedule_id,
+                hire_date,
+                is_on_leave,
+                leave_start_date,
+                leave_expected_end_date,
+                leave_memo,
+                leave_date,
+                retirement_processed,
+                memo,
+                department_id,
+                position_id,
+                employment_type_id,
+                name_kana=self.var_name_kana.get().strip(),
+                phone=self.var_phone.get().strip(),
+                email=self.var_email.get().strip(),
+                bank_name=self.var_bank_name.get().strip(),
+                bank_branch_name=self.var_bank_branch_name.get().strip(),
+                bank_account_type=self.var_bank_account_type.get().strip(),
+                bank_account_number=self.var_bank_account_number.get().strip(),
+                bank_account_holder=self.var_bank_account_holder.get().strip(),
+                is_social_insurance_target=int(self.var_social_insurance_target.get() or 0),
+                is_employment_insurance_target=int(self.var_employment_insurance_target.get() or 0),
+                employee_id=self.employee_id,
+            )
+        except Exception as e:
+            messagebox.showerror("保存エラー", str(e), parent=self)
+            return
         if callable(self.on_saved):
             self.on_saved()
         if not self.employee_id:

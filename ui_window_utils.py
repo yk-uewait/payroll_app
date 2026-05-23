@@ -337,7 +337,11 @@ def _update_treeview_grid_lines(tree):
             if row_id:
                 t.selection_set(row_id)
                 t.focus(row_id)
-                t.event_generate("<Double-1>", x=1, y=y)
+                try:
+                    t.event_generate("<Button-1>", x=1, y=y)
+                    t.event_generate("<ButtonRelease-1>", x=1, y=y)
+                except tk.TclError:
+                    pass
             return "break"
 
         def mousewheel(event, t=tree):
