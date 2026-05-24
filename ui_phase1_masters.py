@@ -796,6 +796,7 @@ class PayrollItemFrame(ttk.Frame):
     def __init__(self, master, conn):
         super().__init__(master)
         self.conn = conn
+        self.var_include_inactive = tk.IntVar(value=0)
         desc = (
             "この画面では、給与明細や月次入力画面に表示する支給・控除項目を設定します。\n"
             "例：基本給、役員報酬、住宅手当、資格手当、社宅控除、食事代控除\n"
@@ -829,10 +830,15 @@ class PayrollItemFrame(ttk.Frame):
         btns.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btns, text="新規作成", command=self.add).pack(side="left", padx=5)
         ttk.Button(btns, text="編集", command=self.edit_selected).pack(side="left", padx=5)
-        ttk.Button(btns, text="削除", command=self.disable_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="有効/無効", command=self.toggle_active_selected).pack(side="left", padx=5)
         ttk.Button(btns, text="↑", width=3, command=lambda: self.move_selected("up")).pack(side="left", padx=3)
         ttk.Button(btns, text="↓", width=3, command=lambda: self.move_selected("down")).pack(side="left", padx=3)
+        ttk.Checkbutton(
+            btns,
+            text="無効項目も表示",
+            variable=self.var_include_inactive,
+            command=self.refresh,
+        ).pack(side="left", padx=(12, 5))
         ttk.Button(btns, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right", padx=5)
         self.refresh()
         enable_enter_key_navigation(self)
@@ -840,7 +846,9 @@ class PayrollItemFrame(ttk.Frame):
     def refresh(self, select_id=None):
         for item in self.tree.get_children():
             self.tree.delete(item)
-        for r in db.list_payroll_items(self.conn, include_inactive=True):
+        include_inactive = bool(self.var_include_inactive.get())
+        for r in db.list_payroll_items(self.conn, include_inactive=include_inactive):
+            is_active = bool(r["is_active"])
             self.tree.insert(
                 "",
                 "end",
@@ -854,7 +862,7 @@ class PayrollItemFrame(ttk.Frame):
                     "○" if r["is_social_insurance_base"] else "",
                     "○" if r["is_employment_insurance_base"] else "",
                     "○" if r["is_commute"] else "",
-                    "○" if r["is_active"] else "",
+                    "有効" if is_active else "無効",
                     r["memo"] or "",
                 ),
             )
@@ -897,15 +905,16 @@ class PayrollItemFrame(ttk.Frame):
         if not row:
             messagebox.showinfo("確認", "行を選択してください。", parent=self)
             return
-        db.set_payroll_item_active(self.conn, row["id"], 0 if row["is_active"] else 1)
-        self.refresh(select_id=row["id"])
+        next_active = 0 if row["is_active"] else 1
+        db.set_payroll_item_active(self.conn, row["id"], next_active)
+        self.refresh(select_id=row["id"] if next_active or self.var_include_inactive.get() else None)
 
     def move_selected(self, direction):
         row = self._selected_row()
         if not row:
             messagebox.showinfo("確認", "行を選択してください。", parent=self)
             return
-        db.move_display_order(self.conn, "payroll_items", row["id"], direction, include_inactive=True)
+        db.move_display_order(self.conn, "payroll_items", row["id"], direction, include_inactive=bool(self.var_include_inactive.get()))
         self.refresh(select_id=row["id"])
 
 

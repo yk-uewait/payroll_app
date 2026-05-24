@@ -29,7 +29,6 @@ ATTENDANCE_COUNT_FIELDS = [
 ATTENDANCE_TIME_FIELDS = [
     ("scheduled_work_minutes", "所定労働時間"),
     ("work_minutes", "労働時間数"),
-    ("non_scheduled_work_minutes", "所定外労働時間"),
     ("overtime_minutes", "時間外労働時間"),
     ("holiday_work_minutes", "休日労働時間"),
     ("night_work_minutes", "深夜労働時間"),
