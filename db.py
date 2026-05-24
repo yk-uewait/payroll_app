@@ -38,6 +38,100 @@ ATTENDANCE_TIME_FIELDS = [
     ("total_overtime_minutes", "総残業時間"),
 ]
 ATTENDANCE_FIELDS = ATTENDANCE_DAY_FIELDS + ATTENDANCE_COUNT_FIELDS + ATTENDANCE_TIME_FIELDS
+ATTENDANCE_PAYROLL_CALC_RULES = [
+    {
+        "attendance_key": "overtime_minutes",
+        "rate_key": "overtime_hourly_rate",
+        "item_code": "overtime_pay",
+        "item_name": "時間外手当",
+        "item_kind": "pay",
+    },
+    {
+        "attendance_key": "holiday_work_minutes",
+        "rate_key": "holiday_hourly_rate",
+        "item_code": "holiday_work_pay",
+        "item_name": "休日労働手当",
+        "item_kind": "pay",
+    },
+    {
+        "attendance_key": "night_work_minutes",
+        "rate_key": "night_hourly_rate",
+        "item_code": "night_work_pay",
+        "item_name": "深夜労働手当",
+        "item_kind": "pay",
+    },
+    {
+        "attendance_key": "holiday_night_work_minutes",
+        "rate_key": "holiday_night_hourly_rate",
+        "item_code": "holiday_night_work_pay",
+        "item_name": "休日深夜手当",
+        "item_kind": "pay",
+    },
+    {
+        "attendance_key": "late_early_leave_minutes",
+        "rate_key": "late_early_deduction_hourly_rate",
+        "item_code": "late_early_deduction",
+        "item_name": "遅刻早退控除",
+        "item_kind": "deduction",
+    },
+]
+ATTENDANCE_PAYROLL_ITEM_STANDARD_SPECS = [
+    {
+        "code": "overtime_pay",
+        "name": "時間外手当",
+        "item_kind": "pay",
+        "category_code": "overtime",
+        "display_order": 30,
+        "is_taxable": 1,
+        "is_social_insurance_base": 1,
+        "is_employment_insurance_base": 1,
+        "aliases": ["時間外手当", "残業手当"],
+    },
+    {
+        "code": "holiday_work_pay",
+        "name": "休日労働手当",
+        "item_kind": "pay",
+        "category_code": "overtime",
+        "display_order": 31,
+        "is_taxable": 1,
+        "is_social_insurance_base": 1,
+        "is_employment_insurance_base": 1,
+        "aliases": ["休日手当", "休日労働手当"],
+    },
+    {
+        "code": "night_work_pay",
+        "name": "深夜労働手当",
+        "item_kind": "pay",
+        "category_code": "overtime",
+        "display_order": 32,
+        "is_taxable": 1,
+        "is_social_insurance_base": 1,
+        "is_employment_insurance_base": 1,
+        "aliases": ["深夜手当", "深夜労働手当"],
+    },
+    {
+        "code": "holiday_night_work_pay",
+        "name": "休日深夜手当",
+        "item_kind": "pay",
+        "category_code": "overtime",
+        "display_order": 33,
+        "is_taxable": 1,
+        "is_social_insurance_base": 1,
+        "is_employment_insurance_base": 1,
+        "aliases": ["休日深夜手当"],
+    },
+    {
+        "code": "late_early_deduction",
+        "name": "遅刻早退控除",
+        "item_kind": "deduction",
+        "category_code": "deduction",
+        "display_order": 201,
+        "is_taxable": 0,
+        "is_social_insurance_base": 0,
+        "is_employment_insurance_base": 0,
+        "aliases": ["遅刻早退控除"],
+    },
+]
 WAGE_LEDGER_ATTENDANCE_FIELDS = [
     ("scheduled_work_days", "所定労働日数"),
     ("work_days", "労働日数"),
@@ -1141,6 +1235,123 @@ def format_attendance_value_for_output(conn, key: str, value) -> str:
             return "0"
     return str(int(value or 0))
 
+def _employee_attendance_rate_defaults() -> dict:
+    return {
+        "overtime_hourly_rate": 0,
+        "holiday_hourly_rate": 0,
+        "night_hourly_rate": 0,
+        "holiday_night_hourly_rate": 0,
+        "late_early_deduction_hourly_rate": 0,
+    }
+
+def get_employee_attendance_rates(conn, employee_id: int) -> dict:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM employee_attendance_rates
+        WHERE employee_id = ?
+        """,
+        (int(employee_id),),
+    ).fetchone()
+    data = _employee_attendance_rate_defaults()
+    if not row:
+        return data
+    for key in data:
+        data[key] = int(row_get(row, key, 0) or 0)
+    return data
+
+def upsert_employee_attendance_rates(conn, employee_id: int, rates: dict):
+    data = _employee_attendance_rate_defaults()
+    for key in data:
+        value = int(rates.get(key, 0) or 0)
+        if value < 0:
+            raise ValueError("社員別勤怠単価は0以上の整数で入力してください。")
+        data[key] = value
+    conn.execute(
+        """
+        INSERT INTO employee_attendance_rates(
+          employee_id,
+          overtime_hourly_rate,
+          holiday_hourly_rate,
+          night_hourly_rate,
+          holiday_night_hourly_rate,
+          late_early_deduction_hourly_rate
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(employee_id) DO UPDATE SET
+          overtime_hourly_rate=excluded.overtime_hourly_rate,
+          holiday_hourly_rate=excluded.holiday_hourly_rate,
+          night_hourly_rate=excluded.night_hourly_rate,
+          holiday_night_hourly_rate=excluded.holiday_night_hourly_rate,
+          late_early_deduction_hourly_rate=excluded.late_early_deduction_hourly_rate,
+          updated_at=datetime('now')
+        """,
+        (
+            int(employee_id),
+            data["overtime_hourly_rate"],
+            data["holiday_hourly_rate"],
+            data["night_hourly_rate"],
+            data["holiday_night_hourly_rate"],
+            data["late_early_deduction_hourly_rate"],
+        ),
+    )
+    conn.commit()
+
+def _round_unit_minutes(unit) -> int:
+    text = str(unit or "1分").strip()
+    match = re.search(r"\d+", text)
+    value = int(match.group(0)) if match else 1
+    return value if value in {1, 5, 10, 15, 30} else 1
+
+def round_attendance_minutes_for_calculation(minutes: int, unit: int, method: str) -> int:
+    minutes = max(0, int(minutes or 0))
+    unit = int(unit or 1)
+    if unit <= 1 or method == "なし":
+        return minutes
+    remainder = minutes % unit
+    if remainder == 0:
+        return minutes
+    if method == "切り捨て":
+        return minutes - remainder
+    if method == "切り上げ":
+        return minutes + (unit - remainder)
+    if method == "四捨五入":
+        return minutes + (unit - remainder) if remainder >= (unit / 2) else minutes - remainder
+    return minutes
+
+def get_payroll_item_by_code(conn, code: str):
+    return conn.execute(
+        """
+        SELECT *
+        FROM payroll_items
+        WHERE code = ?
+        """,
+        ((code or "").strip(),),
+    ).fetchone()
+
+def calculate_attendance_based_payroll_items(conn, employee_id: int, attendance_data: dict) -> dict:
+    rates = get_employee_attendance_rates(conn, employee_id)
+    company = get_company_settings(conn)
+    unit = _round_unit_minutes(row_get(company, "attendance_time_round_unit", "1分") if company else "1分")
+    method = row_get(company, "attendance_time_round_method", "なし") if company else "なし"
+    if method not in {"なし", "切り捨て", "切り上げ", "四捨五入"}:
+        method = "なし"
+
+    results = {}
+    for rule in ATTENDANCE_PAYROLL_CALC_RULES:
+        minutes = int(attendance_data.get(rule["attendance_key"], 0) or 0)
+        rounded_minutes = round_attendance_minutes_for_calculation(minutes, unit, method)
+        rate = int(rates.get(rule["rate_key"], 0) or 0)
+        amount = round_half_up((rounded_minutes * rate) / 60) if rounded_minutes and rate else 0
+        results[rule["item_code"]] = {
+            "amount": amount,
+            "minutes": minutes,
+            "rounded_minutes": rounded_minutes,
+            "rate": rate,
+            "rule": rule,
+        }
+    return results
+
 def list_named_master(conn, table: str, include_inactive: bool = False):
     if table not in {"departments", "positions", "employment_types"}:
         raise ValueError("invalid master table")
@@ -1556,6 +1767,137 @@ def ensure_payroll_item_codes(conn) -> None:
             code = _generate_unique_code(conn, table, prefix)
             conn.execute(f"UPDATE {table} SET code=?, updated_at=datetime('now') WHERE id=?", (code, row["id"]))
     conn.commit()
+
+def ensure_attendance_payroll_item_masters(conn) -> list[str]:
+    """
+    Ensure the payroll item codes required by attendance-rate calculation exist.
+    Existing manual items are reused by changing only their code when there is a
+    single unambiguous same-meaning candidate.
+    """
+    warnings = []
+    category_map = {
+        row["code"]: row["id"]
+        for row in conn.execute("SELECT id, code FROM payroll_item_categories").fetchall()
+    }
+    canonical_codes = {spec["code"] for spec in ATTENDANCE_PAYROLL_ITEM_STANDARD_SPECS}
+
+    def category_id_for(spec: dict):
+        if spec["item_kind"] == "pay":
+            return category_map.get(spec["category_code"]) or category_map.get("allowance")
+        if spec["item_kind"] == "deduction":
+            return category_map.get(spec["category_code"])
+        return category_map.get(spec["category_code"])
+
+    for spec in ATTENDANCE_PAYROLL_ITEM_STANDARD_SPECS:
+        code = spec["code"]
+        category_id = category_id_for(spec)
+        canonical = conn.execute("SELECT * FROM payroll_items WHERE code = ?", (code,)).fetchone()
+        alias_names = [name for name in spec.get("aliases", []) if name]
+        candidates = []
+        if alias_names:
+            placeholders = ", ".join("?" for _ in alias_names)
+            candidates = conn.execute(
+                f"""
+                SELECT *
+                FROM payroll_items
+                WHERE (code IS NULL OR code NOT IN ({", ".join("?" for _ in canonical_codes)}))
+                  AND name IN ({placeholders})
+                  AND item_kind = ?
+                ORDER BY id
+                """,
+                tuple(canonical_codes) + tuple(alias_names) + (spec["item_kind"],),
+            ).fetchall()
+
+        if canonical is None and len(candidates) == 1:
+            conn.execute(
+                """
+                UPDATE payroll_items
+                SET code=?,
+                    name=?,
+                    item_kind=?,
+                    category_id=?,
+                    is_system=0,
+                    is_active=1,
+                    is_taxable=?,
+                    is_social_insurance_base=?,
+                    is_employment_insurance_base=?,
+                    is_commute=0,
+                    display_order=?,
+                    updated_at=datetime('now')
+                WHERE id=?
+                """,
+                (
+                    code,
+                    spec["name"],
+                    spec["item_kind"],
+                    category_id,
+                    spec["is_taxable"],
+                    spec["is_social_insurance_base"],
+                    spec["is_employment_insurance_base"],
+                    spec["display_order"],
+                    candidates[0]["id"],
+                ),
+            )
+            canonical = conn.execute("SELECT * FROM payroll_items WHERE code = ?", (code,)).fetchone()
+        elif canonical is None:
+            if len(candidates) > 1:
+                labels = ", ".join(f'{row["name"]}(id:{row["id"]}, code:{row["code"]})' for row in candidates)
+                warnings.append(f'{spec["name"]} の同義候補が複数あります: {labels}')
+            conn.execute(
+                """
+                INSERT INTO payroll_items(
+                  code, name, item_kind, category_id, is_system, is_active, is_taxable,
+                  is_social_insurance_base, is_employment_insurance_base, is_commute,
+                  display_order, memo
+                )
+                VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    code,
+                    spec["name"],
+                    spec["item_kind"],
+                    category_id,
+                    spec["is_taxable"],
+                    spec["is_social_insurance_base"],
+                    spec["is_employment_insurance_base"],
+                    spec["display_order"],
+                    "勤怠時間×社員別単価の自動計算で使用",
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE payroll_items
+                SET name=?,
+                    item_kind=?,
+                    category_id=COALESCE(?, category_id),
+                    is_system=0,
+                    is_active=1,
+                    is_taxable=?,
+                    is_social_insurance_base=?,
+                    is_employment_insurance_base=?,
+                    is_commute=0,
+                    updated_at=datetime('now')
+                WHERE id=?
+                """,
+                (
+                    spec["name"],
+                    spec["item_kind"],
+                    category_id,
+                    spec["is_taxable"],
+                    spec["is_social_insurance_base"],
+                    spec["is_employment_insurance_base"],
+                    canonical["id"],
+                ),
+            )
+            if candidates:
+                labels = ", ".join(f'{row["name"]}(id:{row["id"]}, code:{row["code"]})' for row in candidates)
+                warnings.append(f'{spec["name"]} は正規コード項目を使用します。同義の手動作成候補: {labels}')
+
+    conn.commit()
+    for message in warnings:
+        print(f"[attendance payroll item master] {message}")
+    return warnings
 
 def upsert_payroll_item_category(conn, code=None, name="", item_kind="pay", display_order=0, is_active=1, memo=None, row_id=None):
     if row_id is None:
@@ -3025,6 +3367,21 @@ def ensure_schema_migrations(conn):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employee_attendance_rates (
+          employee_id INTEGER PRIMARY KEY,
+          overtime_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          holiday_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          night_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          holiday_night_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          late_early_deduction_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(employee_id) REFERENCES employees(employee_id)
+        )
+        """
+    )
 
     # -------------------------------------------------
     # payroll_monthly
@@ -3405,6 +3762,19 @@ def ensure_schema_migrations(conn):
         )
         """,
         """
+        CREATE TABLE IF NOT EXISTS employee_attendance_rates (
+          employee_id INTEGER PRIMARY KEY,
+          overtime_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          holiday_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          night_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          holiday_night_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          late_early_deduction_hourly_rate INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(employee_id) REFERENCES employees(employee_id)
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS payroll_monthly_item_values (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           monthly_id INTEGER NOT NULL,
@@ -3433,6 +3803,7 @@ def ensure_schema_migrations(conn):
     seed_social_insurance_item_master(conn)
     seed_phase1_masters(conn)
     ensure_payroll_item_codes(conn)
+    ensure_attendance_payroll_item_masters(conn)
 
 
 def _get_db_dir(conn) -> Path:

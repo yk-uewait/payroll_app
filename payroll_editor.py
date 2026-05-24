@@ -247,6 +247,13 @@ class PayrollEditorDialog(tk.Toplevel):
         ttk.Separator(self.deduct_inner).grid(row=20, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
         self._build_dynamic_items(self.deduct_inner, "deduction", start_row=21)
         self._build_attendance_items(self.attendance_inner)
+        attendance_action_frame = ttk.Frame(attendance_area)
+        attendance_action_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(6, 8))
+        ttk.Button(
+            attendance_action_frame,
+            text="勤怠から手当計算",
+            command=self.apply_attendance_based_payroll_items,
+        ).pack(fill="x")
         self._bind_scroll_recursive(self.pay_inner, pay_canvas)
         self._bind_scroll_recursive(self.deduct_inner, deduct_canvas)
         self._bind_scroll_recursive(self.attendance_inner, attendance_canvas)
@@ -482,6 +489,102 @@ class PayrollEditorDialog(tk.Toplevel):
             except ValueError as e:
                 raise ValueError(f"{label}: {e}") from e
         return data
+
+    def apply_attendance_based_payroll_items(self):
+        import db
+
+        try:
+            attendance_data = self._parse_attendance_inputs()
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e), parent=self)
+            return
+
+        employee_id = int(self.row["employee_id"])
+        results = db.calculate_attendance_based_payroll_items(self.conn, employee_id, attendance_data)
+        errors = []
+        warnings = []
+        targets = []
+
+        for code, result in results.items():
+            rule = result["rule"]
+            item_name = rule["item_name"]
+            item = db.get_payroll_item_by_code(self.conn, code)
+            if not item:
+                errors.append(
+                    "勤怠計算に必要な支給控除項目が見つかりません。\n\n"
+                    f"{item_name}\n"
+                    f"必要な内部コード: {code}\n\n"
+                    "支給控除項目マスタに同名の項目があっても、内部コードが異なる場合は自動計算に使用できません。\n"
+                    "標準マスタ補完処理を確認してください。"
+                )
+                continue
+            if not int(item["is_active"] or 0):
+                errors.append(f'支給控除項目マスタの「{item_name}（code: {code}）」が無効です。有効にしてください。')
+                continue
+            if item["item_kind"] != rule["item_kind"]:
+                expected = "支給" if rule["item_kind"] == "pay" else "控除"
+                errors.append(f'「{item_name}（code: {code}）」は{expected}項目として登録してください。')
+                continue
+
+            item_id = int(item["id"])
+            meta = self.dynamic_item_sources.get(item_id)
+            var = self.dynamic_item_vars.get(item_id)
+            if meta is None or var is None:
+                errors.append(f'「{item_name}（code: {code}）」がこの社員の編集画面に表示されていません。支給控除マスタの表示条件を確認してください。')
+                continue
+            if meta.get("locked"):
+                errors.append(f'「{item_name}（code: {code}）」はロックされているため反映できません。')
+                continue
+            if int(result["minutes"] or 0) > 0 and int(result["rate"] or 0) == 0:
+                warnings.append(f'{item_name}: 勤怠時間がありますが、社員別単価が0です。')
+
+            try:
+                current_amount = _to_int(var.get())
+            except ValueError:
+                current_amount = 0
+            targets.append(
+                {
+                    "code": code,
+                    "name": item["name"] or item_name,
+                    "var": var,
+                    "current": current_amount,
+                    "amount": int(result["amount"] or 0),
+                }
+            )
+
+        if errors:
+            messagebox.showerror("勤怠計算エラー", "\n".join(errors), parent=self)
+            return
+        if warnings:
+            messagebox.showwarning("勤怠計算の確認", "\n".join(warnings), parent=self)
+
+        conflicts = [
+            t for t in targets
+            if int(t["current"] or 0) != 0 and int(t["current"] or 0) != int(t["amount"] or 0)
+        ]
+        overwrite_conflicts = True
+        if conflicts:
+            lines = ["以下の項目には既に金額が入力されています。", ""]
+            lines.extend(
+                f'{t["name"]}: {_format_amount(t["current"])} 円 → {_format_amount(t["amount"])} 円'
+                for t in conflicts
+            )
+            lines.extend(["", "勤怠計算結果で上書きしますか？"])
+            overwrite_conflicts = messagebox.askyesno("上書き確認", "\n".join(lines), parent=self)
+
+        applied = 0
+        for target in targets:
+            if target in conflicts and not overwrite_conflicts:
+                continue
+            target["var"].set(_format_amount(target["amount"]))
+            applied += 1
+
+        self._update_totals()
+        if overwrite_conflicts:
+            message = f"勤怠計算結果を{applied}項目に反映しました。保存するまではDBには保存されません。"
+        else:
+            message = f"既存金額がある項目は上書きせず、{applied}項目に反映しました。保存するまではDBには保存されません。"
+        messagebox.showinfo("反映完了", message, parent=self)
 
     def _build_net_total(self):
         net_frame = ttk.Frame(self)

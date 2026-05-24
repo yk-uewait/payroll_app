@@ -1126,3 +1126,103 @@ class EmployeeStandardValueFrame(ttk.Frame):
             return
         db.set_employee_payroll_item_standard_value_active(self.conn, row["id"], 0 if row["is_active"] else 1)
         self.refresh(select_id=row["id"])
+
+
+class EmployeeAttendanceRateFrame(ttk.Frame):
+    RATE_FIELDS = [
+        ("overtime_hourly_rate", "時間外単価"),
+        ("holiday_hourly_rate", "休日労働単価"),
+        ("night_hourly_rate", "深夜労働単価"),
+        ("holiday_night_hourly_rate", "休日深夜単価"),
+        ("late_early_deduction_hourly_rate", "遅刻早退控除単価"),
+    ]
+
+    def __init__(self, master, conn):
+        super().__init__(master)
+        self.conn = conn
+        self.employee_options = []
+        self.var_employee = tk.StringVar()
+        self.rate_vars = {key: tk.StringVar(value="0") for key, _label in self.RATE_FIELDS}
+        self._build()
+        self._load_employee_options()
+        enable_enter_key_navigation(self)
+
+    def _build(self):
+        outer = ttk.Frame(self, padding=10)
+        outer.pack(fill="both", expand=True)
+
+        desc = (
+            "ここで設定した単価は、給与編集画面の「勤怠から手当計算」ボタンで使用します。\n"
+            "勤怠入力値そのものや給与保存時の金額は自動変更されません。"
+        )
+        ttk.Label(outer, text=desc, justify="left").pack(anchor="w", pady=(0, 10))
+
+        selector = ttk.LabelFrame(outer, text="社員", padding=8)
+        selector.pack(fill="x", pady=(0, 10))
+        self.cmb_employee = ttk.Combobox(selector, textvariable=self.var_employee, state="readonly", width=36)
+        self.cmb_employee.pack(side="left", padx=(0, 8))
+        self.cmb_employee.bind("<<ComboboxSelected>>", lambda _event: self._load_selected_employee())
+        ttk.Button(selector, text="再表示", command=self._load_selected_employee).pack(side="left")
+
+        form = ttk.LabelFrame(outer, text="勤怠単価", padding=8)
+        form.pack(fill="x", pady=(0, 10))
+        for row, (key, label) in enumerate(self.RATE_FIELDS):
+            ttk.Label(form, text=label).grid(row=row, column=0, padx=5, pady=4, sticky="w")
+            ttk.Entry(form, textvariable=self.rate_vars[key], width=14, justify="right").grid(
+                row=row, column=1, padx=5, pady=4, sticky="w"
+            )
+            ttk.Label(form, text="円/時").grid(row=row, column=2, padx=5, pady=4, sticky="w")
+
+        footer = ttk.Frame(outer)
+        footer.pack(fill="x")
+        ttk.Button(footer, text="保存", command=self.save).pack(side="left", padx=(0, 8))
+        ttk.Button(footer, text="閉じる", command=lambda: self.winfo_toplevel().destroy()).pack(side="right")
+
+    def _load_employee_options(self):
+        self.employee_options = [
+            (f'{r["employee_code"]} {r["name_kanji"]}', int(r["employee_id"]))
+            for r in db.list_employees(self.conn)
+        ]
+        self.cmb_employee.configure(values=[label for label, _employee_id in self.employee_options])
+        if self.employee_options and not self.var_employee.get():
+            self.var_employee.set(self.employee_options[0][0])
+            self._load_selected_employee()
+
+    def _selected_employee_id(self):
+        selected = self.var_employee.get()
+        for label, employee_id in self.employee_options:
+            if label == selected:
+                return employee_id
+        return None
+
+    def _load_selected_employee(self):
+        employee_id = self._selected_employee_id()
+        if not employee_id:
+            for var in self.rate_vars.values():
+                var.set("0")
+            return
+        rates = db.get_employee_attendance_rates(self.conn, employee_id)
+        for key, var in self.rate_vars.items():
+            var.set(f'{int(rates.get(key, 0) or 0):,}')
+
+    def _parse_amount(self, key: str) -> int:
+        text = (self.rate_vars[key].get() or "").strip().replace(",", "")
+        if text == "":
+            return 0
+        if not text.isdigit():
+            raise ValueError("単価は0以上の整数で入力してください。")
+        return int(text)
+
+    def save(self):
+        employee_id = self._selected_employee_id()
+        if not employee_id:
+            messagebox.showerror("入力エラー", "社員を選択してください。", parent=self)
+            return
+        try:
+            rates = {key: self._parse_amount(key) for key, _label in self.RATE_FIELDS}
+        except ValueError as e:
+            messagebox.showerror("入力エラー", str(e), parent=self)
+            return
+        db.upsert_employee_attendance_rates(self.conn, employee_id, rates)
+        messagebox.showinfo("保存完了", "社員別勤怠単価を保存しました。", parent=self)
+        self._load_selected_employee()

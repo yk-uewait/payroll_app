@@ -7,6 +7,7 @@ from ui_empins_rate import EmpInsRateDialog
 from ui_payment_schedule import PaymentScheduleFrame
 from ui_phase1_masters import (
     CompanySettingsDialog,
+    EmployeeAttendanceRateFrame,
     EmployeeStandardValueFrame,
     DepartmentMasterFrame,
     NamedMasterFrame,
@@ -117,6 +118,12 @@ class SettingsFrame(ttk.Frame):
         self._add_setting_row(scroll_frame, "雇用保険料率の設定", self.open_empins_rate, "給与計算で使用する雇用保険料率を設定します。")
         self._add_setting_row(scroll_frame, "社会保険料率の設定", self.open_social_rate, "健康保険、介護保険、厚生年金などの社会保険料率を設定します。")
         self._add_setting_row(scroll_frame, "住民税年次一括入力", self.open_resident_tax_annual, "年度ごとの住民税額を、社員一覧で12か月分まとめて入力します。")
+        self._add_setting_row(
+            scroll_frame,
+            "社員別勤怠単価設定",
+            self.open_employee_attendance_rates,
+            "時間外・休日・深夜・休日深夜・遅刻早退控除の単価を社員ごとに設定します。給与編集画面のボタン計算で使用します。",
+        )
         self._bind_mousewheel(canvas, scroll_frame)
 
         footer = ttk.Frame(outer)
@@ -237,4 +244,8 @@ class SettingsFrame(ttk.Frame):
 
     def open_employee_standard_values(self):
         win = FramePopupWindow(self, title="社員別標準金額設定", frame_class=EmployeeStandardValueFrame, conn=self.conn, geometry="900x460")
+        win.focus()
+
+    def open_employee_attendance_rates(self):
+        win = FramePopupWindow(self, title="社員別勤怠単価設定", frame_class=EmployeeAttendanceRateFrame, conn=self.conn, geometry="620x360")
         win.focus()

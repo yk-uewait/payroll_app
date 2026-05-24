@@ -438,6 +438,18 @@ CREATE TABLE IF NOT EXISTS employee_payroll_item_standard_values (
   FOREIGN KEY(item_id) REFERENCES payroll_items(id)
 );
 
+CREATE TABLE IF NOT EXISTS employee_attendance_rates (
+  employee_id   INTEGER PRIMARY KEY,
+  overtime_hourly_rate INTEGER NOT NULL DEFAULT 0,
+  holiday_hourly_rate INTEGER NOT NULL DEFAULT 0,
+  night_hourly_rate INTEGER NOT NULL DEFAULT 0,
+  holiday_night_hourly_rate INTEGER NOT NULL DEFAULT 0,
+  late_early_deduction_hourly_rate INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(employee_id) REFERENCES employees(employee_id)
+);
+
 CREATE TABLE IF NOT EXISTS payroll_monthly_item_values (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   monthly_id    INTEGER NOT NULL,
